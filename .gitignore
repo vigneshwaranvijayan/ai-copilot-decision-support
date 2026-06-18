@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+ENV/
+.ipynb_checkpoints/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Data / outputs
+*.html
+*.pdf
+*.pkl
+*.joblib
+outputs/
+reports/
+models/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Keep folder placeholders
+!docs/screenshots/.gitkeep
+!notebooks/.gitkeep
