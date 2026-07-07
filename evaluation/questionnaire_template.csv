@@ -1,1 +1,3 @@
-participant_id,condition,understanding,trust,usefulness,usability,decision_confidence,human_review_clear,comment
+participant_id,condition,understanding,trust,usefulness,usability,decision_confidence,safety_awareness,comment
+P001,prediction_only,,,,,,,
+P001,prediction_explanation_recommendation,,,,,,,

@@ -1,0 +1,7 @@
+customerID,gender,tenure,Contract,MonthlyCharges,TotalCharges,TechSupport,Churn
+C001,Female,1,Month-to-month,80.2,80.2,No,Yes
+C002,Male,24,One year,55.1,1322.4,Yes,No
+C003,Female,3,Month-to-month,89.9,269.7,No,Yes
+C004,Male,36,Two year,45.0,1620.0,Yes,No
+C005,Female,8,Month-to-month,70.5,564.0,No,Yes
+C006,Male,48,Two year,49.5,2376.0,Yes,No
