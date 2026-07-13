@@ -122,14 +122,19 @@ def test_one_letter_target_y_only_when_explicitly_asked():
     assert 'y' in response.table.columns
 
 
-def test_feedback_themes_returns_word_summary_not_ranking():
+def test_feedback_themes_returns_business_theme_table_not_value_counts():
     df = pd.DataFrame({
-        'customerID': ['C1', 'C2'],
-        'customerfeedback': ['happy satisfied service', 'worst bad problem cancel'],
+        'customerID': ['C1', 'C2', 'C3'],
+        'customerfeedback': [
+            'happy satisfied service and good value',
+            'worst bad problem cancel because monthly charges are expensive',
+            'internet service is slow and support is delayed'
+        ],
     })
     response = answer_question('show feedback themes', df, dataset_name='telco.csv')
     assert response.table is not None
-    assert 'word' in response.table.columns
+    assert 'theme' in response.table.columns
+    assert 'recommended_action' in response.table.columns
     assert 'rank' not in response.table.columns
 
 
@@ -217,3 +222,27 @@ def test_marketing_business_suggestions():
     assert response.table is not None
     assert "business_suggestion" in response.table.columns
     assert "campaign" in response.answer.lower() or "marketing" in response.answer.lower()
+
+
+def test_common_customerfeedback_issue_uses_theme_engine():
+    df = pd.DataFrame({
+        'customerid': ['C1', 'C2', 'C3'],
+        'churn': [1, 1, 0],
+        'customerfeedback': [
+            'The monthly charges are expensive and billing is confusing.',
+            'I want to cancel because the internet service is slow and unreliable.',
+            'I am happy with support and the price is reasonable.',
+        ],
+    })
+    response = answer_question(
+        'what is most common issue in customerfeedback',
+        df,
+        dataset_name='telco_prep.csv',
+        target_column='churn',
+        positive_label=1,
+    )
+    assert response.table is not None
+    assert 'theme' in response.table.columns
+    assert 'recommended_action' in response.table.columns
+    assert 'customerfeedback' in response.answer.lower()
+    assert 'most common' in response.answer.lower() or 'common' in response.answer.lower()

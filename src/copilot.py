@@ -458,6 +458,24 @@ def _feedback_business_action_intent(q: str) -> bool:
     return bool((tokens & feedback_terms or "customerfeedback" in compact) and (tokens & action_terms or compact.startswith("howtoimprove")))
 
 
+def _feedback_theme_or_issue_intent(q: str) -> bool:
+    """Detect questions asking for common feedback issues/themes.
+
+    These should not be answered as raw value counts of full feedback text.
+    Instead, they should use the transparent theme/action evidence table.
+    """
+    tokens = _query_tokens(q)
+    compact = _compact(q)
+    feedback_terms = {"feedback", "comment", "comments", "review", "reviews", "sentiment"}
+    issue_terms = {
+        "issue", "issues", "problem", "problems", "complaint", "complaints",
+        "theme", "themes", "common", "most", "main", "major", "pain",
+        "painpoint", "painpoints", "reason", "reasons", "cause", "causes",
+        "topic", "topics", "concern", "concerns", "weakness", "weaknesses",
+    }
+    return bool((tokens & feedback_terms or "customerfeedback" in compact) and (tokens & issue_terms))
+
+
 def _feedback_business_action_table(
     df: pd.DataFrame,
     text_col: str,
@@ -669,7 +687,7 @@ def _suggestion_table(df: pd.DataFrame, target_column: Optional[str]) -> pd.Data
 # Main answer engine
 # ---------------------------------------------------------------------------
 
-def answer_question(
+def _answer_question_core(
     question: str,
     df: pd.DataFrame,
     dataset_name: str = "active_dataset",
@@ -688,7 +706,7 @@ def answer_question(
         "missing", "duplicate", "overview", "summary", "model", "performance", "churn", "target",
         "driver", "drivers", "recommendation", "correlation", "highest", "lowest", "worst", "best",
         "unemployed", "marital", "education", "feedback", "balance", "average", "distribution",
-        "business", "insight", "ideas", "improve", "improvement", "strategy", "sales", "product",
+        "business", "insight", "ideas", "improve", "improvement", "strategy", "issue", "issues", "theme", "themes", "pain", "painpoint", "painpoints", "sales", "product",
         "stock", "purchase", "forecast", "employee", "salary", "promotion", "resign", "attrition",
         "campaign", "marketing", "operations", "complaint", "ticket",
     ]
@@ -798,6 +816,51 @@ def answer_question(
             corrections=corrections,
             safety_warning="These are decision-support suggestions generated from transparent keyword/theme rules. A human reviewer must check customer context before acting.",
             context={"topic": "feedback_business_actions", "text_col": text_col, "target_column": target_column},
+        )
+
+    # Common feedback issue/theme questions should use transparent theme
+    # evidence, not raw full-text value counts.
+    if _feedback_theme_or_issue_intent(q):
+        explicit_cols = _explicit_column_mentions(q, list(df.columns))
+        feedback_cols = _feedback_columns(df)
+        text_col = next((c for c in explicit_cols if c in feedback_cols), None) or (feedback_cols[0] if feedback_cols else None)
+        if not text_col:
+            return CopilotResponse("I could not find a feedback/comment/review text column in the active dataset. " + source, interpreted_question=q, corrections=corrections)
+        table = _feedback_business_action_table(df, text_col, target_column=target_column, positive_label=positive_label)
+        if table.empty:
+            words = _top_text_words_clean(df, text_col, n=20)
+            chart = px.bar(words, x="word", y="count", title=f"Top issue words in {text_col}") if not words.empty else None
+            return CopilotResponse(
+                f"I could not match the feedback to predefined business themes, so I returned cleaned top words from `{text_col}` instead. {source}",
+                table=words,
+                chart=chart,
+                interpreted_question=q,
+                corrections=corrections,
+                safety_warning="This is a text-summary fallback. A human reviewer should inspect example records before deciding actions.",
+                context={"topic": "feedback_themes", "text_col": text_col, "target_column": target_column},
+            )
+        chart = px.bar(
+            table.head(8),
+            x="theme",
+            y="evidence_rows",
+            hover_data=["negative_evidence_rows", "priority"],
+            title=f"Most common feedback issues/themes from {text_col}",
+        )
+        top = table.iloc[0]
+        answer = (
+            f"The most common actionable feedback issue/theme is **{top['theme']}**, "
+            f"with {int(top['evidence_rows']):,} matching row(s) and "
+            f"{int(top['negative_evidence_rows']):,} negative-evidence row(s). "
+            f"Recommended action: {top['recommended_action']} {source}"
+        )
+        return CopilotResponse(
+            answer,
+            table=table,
+            chart=chart,
+            interpreted_question=q,
+            corrections=corrections,
+            safety_warning="These themes use transparent keyword rules from uploaded feedback. Review sample records before taking customer-facing actions.",
+            context={"topic": "feedback_themes", "text_col": text_col, "target_column": target_column},
         )
 
     if tokens & {"recommend", "recommendation", "action", "actions", "suggest", "suggestion"}:
@@ -928,3 +991,87 @@ def answer_question(
         corrections=corrections,
         context={"topic": "fallback"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Presentation wrapper: every Copilot answer follows the same academic frame
+# ---------------------------------------------------------------------------
+
+def _business_use_hint(context: Dict[str, Any], question: str) -> str:
+    topic = str(context.get("topic", "")).lower() if context else ""
+    domain = str(context.get("domain", "")).lower() if context else ""
+    q = _norm_text(question)
+    if "missing" in topic:
+        return "Use this to prioritise data-quality fixes before modelling or reporting. Columns with high missingness may need collection changes, imputation or exclusion."
+    if "model" in topic:
+        return "Use the leaderboard to choose the most balanced decision-support model. F1 and ROC-AUC are useful for comparing models, but weak metrics should be reported as limitations."
+    if "drivers" in topic:
+        return "Use the strongest drivers to explain why the model behaves as it does and to identify areas that may need operational attention."
+    if "feedback" in topic:
+        return "Use the ranked feedback/themes to decide which customer pain points need service, pricing, support or communication improvements."
+    if "business" in topic or domain:
+        return "Use these suggestions as an action shortlist. Prioritise items with stronger dataset evidence, then validate with a manager or domain expert."
+    if "rank" in context or "rank_col" in context:
+        return "Use the top/bottom records to review unusual cases, outliers or priority customers/items, not to make automatic decisions."
+    if "group_col" in context:
+        return "Use the group comparison to identify stronger and weaker segments, then investigate causes before taking action."
+    if any(t in q for t in ["improve", "suggest", "action", "business", "purchase", "stock", "employee", "customer"]):
+        return "Use this as decision-support evidence only. The system does not use external market, HR or customer context unless you upload it."
+    return "Use this result as evidence for analysis, reporting or follow-up questions. Ask for business suggestions if you want recommended actions from this dataset."
+
+
+def _frame_copilot_answer(response: CopilotResponse, *, question: str, dataset_name: str, df: pd.DataFrame) -> CopilotResponse:
+    """Make every answer clear, evidence-based and dissertation-friendly."""
+    if response.answer.strip().startswith("### Copilot answer"):
+        return response
+    context = response.context or {}
+    cols_used = []
+    for key in ["target_column", "group_col", "rank_col", "text_col", "filter_col"]:
+        value = context.get(key)
+        if value and value not in cols_used:
+            cols_used.append(str(value))
+    if not cols_used:
+        # Use explicit columns mentioned in the question when available.
+        cols_used = _explicit_column_mentions(question, list(df.columns))[:4]
+    cols_text = ", ".join(f"`{c}`" for c in cols_used) if cols_used else "dataset-level summary"
+    evidence_count = ""
+    if response.table is not None and not response.table.empty:
+        evidence_count = f"Table returned: {len(response.table):,} row(s)."
+    elif response.chart is not None:
+        evidence_count = "Visual chart returned."
+    else:
+        evidence_count = "Text evidence returned."
+    business_hint = _business_use_hint(context, question)
+    response.answer = (
+        "### Copilot answer\n"
+        f"**Question understood as:** {response.interpreted_question or question}\n\n"
+        f"**Dataset used:** `{dataset_name}` ({len(df):,} rows, {df.shape[1]:,} columns).\n\n"
+        f"**Columns/artefacts used:** {cols_text}.\n\n"
+        f"**Evidence from the uploaded data:** {response.answer}\n\n"
+        f"**Business / decision-support use:** {business_hint}\n\n"
+        f"**Evidence format:** {evidence_count}"
+    )
+    return response
+
+
+def answer_question(
+    question: str,
+    df: pd.DataFrame,
+    dataset_name: str = "active_dataset",
+    target_column: Optional[str] = None,
+    positive_label: Optional[Any] = None,
+    model_output: Optional[Any] = None,
+    explanation_output: Optional[Any] = None,
+    previous_context: Optional[Dict[str, Any]] = None,
+) -> CopilotResponse:
+    response = _answer_question_core(
+        question,
+        df,
+        dataset_name=dataset_name,
+        target_column=target_column,
+        positive_label=positive_label,
+        model_output=model_output,
+        explanation_output=explanation_output,
+        previous_context=previous_context,
+    )
+    return _frame_copilot_answer(response, question=question, dataset_name=dataset_name, df=df)

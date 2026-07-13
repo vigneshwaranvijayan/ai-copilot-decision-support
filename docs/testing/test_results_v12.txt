@@ -1,0 +1,2 @@
+pytest -q
+24 passed

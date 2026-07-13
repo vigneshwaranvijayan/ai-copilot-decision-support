@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import traceback
+from pathlib import Path
 from typing import Dict
 
 import numpy as np
@@ -36,8 +37,16 @@ from src.eda import (
     simple_sentiment_summary,
 )
 from src.explainability import explain_model, top_driver_sentences
-from src.modeling import detect_binary_targets, infer_positive_label, train_models, XGBOOST_AVAILABLE
+from src.modeling import (
+    detect_binary_targets,
+    detect_regression_targets,
+    infer_positive_label,
+    train_models,
+    train_regression_models,
+    XGBOOST_AVAILABLE,
+)
 from src.report import make_markdown_report
+from src.visual_analytics import build_visual_dashboard
 
 st.set_page_config(
     page_title="Explainable AI Copilot",
@@ -48,7 +57,23 @@ st.set_page_config(
 
 
 def render_plotly_chart(fig, key: str) -> None:
-    """Render Plotly figures with a unique Streamlit key to avoid duplicate element errors."""
+    """Render Plotly figures with a consistent modern presentation and unique Streamlit key."""
+    if fig is not None:
+        fig.update_layout(
+            template="plotly_white",
+            hovermode="closest",
+            margin=dict(l=35, r=25, t=60, b=35),
+            title=dict(x=0.02, xanchor="left"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        # Some Plotly traces, such as Indicator/Gauge, do not support
+        # hovertemplate. Updating all traces at once can crash the app on
+        # those chart types, so only update traces that expose the property.
+        for trace in fig.data:
+            if hasattr(trace, "hovertemplate"):
+                trace.hovertemplate = None
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 CUSTOM_CSS = """
@@ -86,9 +111,13 @@ def init_state():
         "cleaning_reports": {},
         "active_dataset": None,
         "model_outputs": {},
+        "regression_outputs": {},
         "explanations": {},
         "chat_history": [],
         "chat_contexts": {},
+        "business_last_response": None,
+        "evaluation_responses": [],
+        "scale_evidence": [],
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -135,8 +164,8 @@ init_state()
 st.markdown(
     """
 <div class='hero'>
-  <h1>Explainable AI Copilot for Business Decision Support</h1>
-  <p>Upload structured business data, clean it, explore it, train controlled models, explain predictions and ask data-grounded Copilot questions.</p>
+  <h1>Visual Explainable AI Copilot for Business Decision Support</h1>
+  <p>Upload structured business data, create modern visual evidence, train controlled models, explain predictions, generate business recommendations and capture evaluation evidence.</p>
 </div>
 """,
     unsafe_allow_html=True,
@@ -208,7 +237,7 @@ with st.sidebar:
             st.caption("Load at least two datasets to enable merging.")
 
     st.divider()
-    st.caption("Scope guard: the main dissertation evaluation should remain customer churn. Extra datasets are robustness tests.")
+    st.caption("Scope guard: customer churn remains the main evaluation; extra datasets provide robustness, gap and scalability evidence.")
 
 if not st.session_state.cleaned:
     c1, c2, c3 = st.columns(3)
@@ -225,6 +254,7 @@ df = active_df()
 assert df is not None
 report = st.session_state.cleaning_reports.get(name)
 model_output = st.session_state.model_outputs.get(name)
+regression_output = st.session_state.regression_outputs.get(name)
 explanation_output = st.session_state.explanations.get(name)
 
 st.subheader(f"Active dataset: `{name}`")
@@ -234,7 +264,7 @@ for col, (label, value) in zip(cols, metrics.items()):
     with col:
         render_metric_card(label, f"{value:,}" if isinstance(value, int) else value)
 
-main_tabs = st.tabs(["📁 Data", "🧹 Cleaning", "📊 EDA", "🤖 Models", "🔎 Explain", "💡 Business", "💬 Copilot", "📄 Export"])
+main_tabs = st.tabs(["📁 Data", "🧹 Cleaning", "📊 EDA", "🤖 Predictive Models", "🔎 Explain", "💡 Business Copilot", "💬 AI Copilot", "🧪 Evaluation", "🏗️ Scale Readiness", "📄 Export", "📈 Visual Analytics"])
 
 with main_tabs[0]:
     st.markdown("### Dataset preview")
@@ -338,51 +368,122 @@ with main_tabs[2]:
             st.info("Need at least two numeric columns for correlation heatmap.")
 
 with main_tabs[3]:
-    st.markdown("### Controlled model comparison")
-    target_candidates = detect_binary_targets(df)
-    if target_candidates:
-        left, right = st.columns([2, 1])
-        with left:
-            target_col = st.selectbox("Select binary target", target_candidates + [c for c in df.columns if c not in target_candidates], key="model_target")
-        with right:
-            possible_values = list(df[target_col].dropna().unique()) if target_col in df.columns else []
-            default_pos = infer_positive_label(df[target_col]) if target_col in df.columns and df[target_col].nunique(dropna=True) == 2 else (possible_values[0] if possible_values else None)
-            positive_value = st.selectbox("Positive class", possible_values, index=possible_values.index(default_pos) if default_pos in possible_values else 0, key="model_pos") if possible_values else None
-        inc_xgb = st.checkbox("Try optional XGBoost if installed", value=XGBOOST_AVAILABLE, help="The app continues normally if XGBoost is not installed or fails.")
-        max_rows = st.slider("Maximum rows for model training", min_value=5000, max_value=200000, value=min(max(len(df), 5000), 120000), step=5000, help="Large datasets may be sampled for model training to keep Streamlit responsive.")
-        if st.button("Train and compare all models", type="primary", use_container_width=True):
-            try:
-                with st.spinner("Training models and selecting the best model..."):
-                    output = train_models(df, target_col, positive_value, include_xgboost=inc_xgb, max_training_rows=max_rows)
-                    st.session_state.model_outputs[name] = output
-                    st.session_state.explanations.pop(name, None)
-                st.success(f"Training complete. Best model: {output.best_result.model_name}")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Model training failed: {exc}")
-                with st.expander("Error detail"):
-                    st.code(traceback.format_exc())
-    else:
-        st.warning("No binary target detected. Model training is disabled for this active dataset.")
+    st.markdown("### Predictive model centre")
+    st.caption(
+        "Classification is the main evaluated workflow for customer churn. "
+        "Regression is included as an optional robustness mode for numeric business outcomes such as sales, revenue or profit."
+    )
+    model_tabs = st.tabs(["Classification: Yes/No targets", "Regression: numeric targets", "Model evidence and guidance"])
 
-    if model_output and model_output.best_result:
-        st.markdown("#### Model leaderboard")
-        st.dataframe(model_output.leaderboard, use_container_width=True)
-        best = model_output.best_result
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Best model", best.model_name)
-        c2.metric("F1", f"{best.metrics['f1']:.3f}")
-        c3.metric("Recall", f"{best.metrics['recall']:.3f}")
-        c4.metric("Precision", f"{best.metrics['precision']:.3f}")
-        c5.metric("ROC-AUC", f"{best.metrics['roc_auc']:.3f}" if not np.isnan(best.metrics['roc_auc']) else "n/a")
-        st.markdown("#### Confusion matrix")
-        conf = pd.DataFrame(best.confusion, index=["Actual negative", "Actual positive"], columns=["Predicted negative", "Predicted positive"])
-        st.dataframe(conf, use_container_width=True)
-        if model_output.skipped_models:
-            with st.expander("Skipped/failed models"):
-                st.json(model_output.skipped_models)
-        if best.metrics["f1"] < 0.50:
-            st.warning("Model performance is weak. Use explanations carefully and report this limitation honestly.")
+    with model_tabs[0]:
+        st.markdown("#### Controlled classification model comparison")
+        target_candidates = detect_binary_targets(df)
+        if target_candidates:
+            left, right = st.columns([2, 1])
+            with left:
+                target_col = st.selectbox("Select binary target", target_candidates + [c for c in df.columns if c not in target_candidates], key="model_target")
+            with right:
+                possible_values = list(df[target_col].dropna().unique()) if target_col in df.columns else []
+                default_pos = infer_positive_label(df[target_col]) if target_col in df.columns and df[target_col].nunique(dropna=True) == 2 else (possible_values[0] if possible_values else None)
+                positive_value = st.selectbox("Positive class", possible_values, index=possible_values.index(default_pos) if default_pos in possible_values else 0, key="model_pos") if possible_values else None
+            inc_xgb = st.checkbox("Try optional XGBoost if installed", value=XGBOOST_AVAILABLE, help="The app continues normally if XGBoost is not installed or fails.", key="cls_xgb")
+            max_rows = st.slider("Maximum rows for classification training", min_value=5000, max_value=200000, value=min(max(len(df), 5000), 120000), step=5000, help="Large datasets may be sampled for model training to keep Streamlit responsive.", key="cls_rows")
+            if st.button("Train and compare classification models", type="primary", use_container_width=True):
+                try:
+                    with st.spinner("Training classification models and selecting the best model..."):
+                        output = train_models(df, target_col, positive_value, include_xgboost=inc_xgb, max_training_rows=max_rows)
+                        st.session_state.model_outputs[name] = output
+                        st.session_state.explanations.pop(name, None)
+                    st.success(f"Training complete. Best model: {output.best_result.model_name}")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Classification training failed: {exc}")
+                    with st.expander("Error detail"):
+                        st.code(traceback.format_exc())
+        else:
+            st.warning("No binary target detected. Classification training is disabled for this active dataset.")
+
+        if model_output and model_output.best_result:
+            st.markdown("#### Classification leaderboard")
+            st.dataframe(model_output.leaderboard, use_container_width=True)
+            best = model_output.best_result
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Best model", best.model_name)
+            c2.metric("F1", f"{best.metrics['f1']:.3f}")
+            c3.metric("Recall", f"{best.metrics['recall']:.3f}")
+            c4.metric("Precision", f"{best.metrics['precision']:.3f}")
+            c5.metric("ROC-AUC", f"{best.metrics['roc_auc']:.3f}" if not np.isnan(best.metrics['roc_auc']) else "n/a")
+            try:
+                metric_long = model_output.leaderboard.melt(id_vars=["model"], value_vars=["f1", "recall", "precision", "roc_auc"], var_name="metric", value_name="score")
+                fig_metrics = px.bar(metric_long, x="model", y="score", color="metric", barmode="group", title="Classification metric comparison")
+                render_plotly_chart(fig_metrics, key=f"classification_metrics_{name}")
+            except Exception:
+                pass
+            st.markdown("#### Confusion matrix")
+            conf = pd.DataFrame(best.confusion, index=["Actual negative", "Actual positive"], columns=["Predicted negative", "Predicted positive"])
+            st.dataframe(conf, use_container_width=True)
+            if model_output.skipped_models:
+                with st.expander("Skipped/failed models"):
+                    st.json(model_output.skipped_models)
+            if best.metrics["f1"] < 0.50:
+                st.warning("Model performance is weak. Use explanations carefully and report this limitation honestly.")
+            else:
+                st.success("This classification model is suitable for decision-support demonstration, but not automatic decision-making.")
+
+    with model_tabs[1]:
+        st.markdown("#### Optional regression model comparison")
+        regression_candidates = detect_regression_targets(df)
+        if regression_candidates:
+            reg_target = st.selectbox("Select numeric target", regression_candidates + [c for c in df.select_dtypes(include=np.number).columns if c not in regression_candidates], key="reg_target")
+            inc_xgb_reg = st.checkbox("Try optional XGBoost Regressor if installed", value=XGBOOST_AVAILABLE, key="reg_xgb")
+            max_rows_reg = st.slider("Maximum rows for regression training", min_value=5000, max_value=200000, value=min(max(len(df), 5000), 120000), step=5000, key="reg_rows")
+            if st.button("Train and compare regression models", use_container_width=True):
+                try:
+                    with st.spinner("Training regression models..."):
+                        reg_output = train_regression_models(df, reg_target, include_xgboost=inc_xgb_reg, max_training_rows=max_rows_reg)
+                        st.session_state.regression_outputs[name] = reg_output
+                    st.success(f"Regression training complete. Best model: {reg_output.best_result.model_name}")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Regression training failed: {exc}")
+                    with st.expander("Error detail"):
+                        st.code(traceback.format_exc())
+        else:
+            st.info("No strong continuous numeric target detected. Regression mode is optional and is only useful for sales, revenue, profit, quantity, score or time targets.")
+
+        regression_output = st.session_state.regression_outputs.get(name)
+        if regression_output and regression_output.best_result:
+            st.markdown("#### Regression leaderboard")
+            st.dataframe(regression_output.leaderboard, use_container_width=True)
+            best_reg = regression_output.best_result
+            r1, r2, r3, r4 = st.columns(4)
+            r1.metric("Best regressor", best_reg.model_name)
+            r2.metric("MAE", f"{best_reg.metrics['mae']:.3f}")
+            r3.metric("RMSE", f"{best_reg.metrics['rmse']:.3f}")
+            r4.metric("R²", f"{best_reg.metrics['r2']:.3f}" if not np.isnan(best_reg.metrics['r2']) else "n/a")
+            st.dataframe(regression_output.target_summary, use_container_width=True)
+            pred_df = pd.DataFrame({"actual": best_reg.y_test.reset_index(drop=True), "predicted": best_reg.y_pred}).head(1000)
+            fig_scatter = px.scatter(pred_df, x="actual", y="predicted", title=f"Actual vs predicted {regression_output.target_column}")
+            render_plotly_chart(fig_scatter, key=f"regression_scatter_{name}")
+            if regression_output.skipped_models:
+                with st.expander("Skipped/failed regression models"):
+                    st.json(regression_output.skipped_models)
+            st.info("Regression outputs are optional robustness evidence. They should not replace the main churn classification evaluation.")
+
+    with model_tabs[2]:
+        st.markdown("#### Model mode decision logic")
+        st.markdown(
+            """
+| Uploaded target type | System mode | Example | Dissertation status |
+|---|---|---|---|
+| Yes/No, 0/1, True/False | Classification | Churn, Attrition, Exited, y | Main implemented and evaluated workflow |
+| Continuous numeric | Regression | Sales, revenue, profit, delivery time | Optional robustness mode |
+| No target column | EDA + Business Copilot | Retail transactions, feedback, operations logs | Implemented insight workflow |
+| Action/reward history | RL / bandit extension | Retention action feedback | Future work only |
+"""
+        )
+        st.warning("The system supports multiple dataset types, but customer churn remains the primary evaluated case study. Other modes strengthen robustness and discussion, not scope creep.")
+
 
 with main_tabs[4]:
     st.markdown("### Prediction explanation")
@@ -451,10 +552,24 @@ with main_tabs[5]:
             positive = model_output.positive_label if model_output else (infer_positive_label(df[target_col]) if target_col else None)
             response = _answer_business_question(qbtn, df, dataset_name=name, target_column=target_col, positive_label=positive, model_output=model_output, explanation_output=st.session_state.explanations.get(name), previous_context=st.session_state.chat_contexts.get(name))
             st.session_state.chat_history.append({"dataset": name, "question": qbtn, "response": response})
+            st.session_state.business_last_response = {"dataset": name, "question": qbtn, "response": response}
             if response.context:
                 st.session_state.chat_contexts[name] = response.context
             st.rerun()
-    st.markdown("Business insight answers will appear in the Copilot tab so they remain part of the evidence chat history.")
+
+    last_business = st.session_state.get("business_last_response")
+    if last_business and last_business.get("dataset") == name:
+        st.markdown("#### Latest business recommendation")
+        st.caption(f"Question: {last_business['question']}")
+        response = last_business["response"]
+        st.markdown(response.answer)
+        if response.table is not None and not response.table.empty:
+            st.dataframe(response.table, use_container_width=True)
+        if response.chart is not None:
+            render_plotly_chart(response.chart, key=f"business_inline_chart_{name}")
+        st.warning(response.safety_warning)
+    else:
+        st.info("Click a business question above. The answer will appear here and also be saved in the AI Copilot chat history as evaluation evidence.")
     st.warning("Safety guard: the system must not make final business, financial or HR decisions automatically. It provides data-grounded suggestions for human review.")
 
 with main_tabs[6]:
@@ -562,6 +677,174 @@ with main_tabs[6]:
             st.warning(response.safety_warning)
 
 with main_tabs[7]:
+    st.markdown("### Evaluation workspace")
+    st.caption("Use this page to collect evidence for the dissertation evaluation: prediction-only output versus explanation-supported Copilot output.")
+    eval_tabs = st.tabs(["Participant task", "Questionnaire", "Collected responses"])
+
+    with eval_tabs[0]:
+        if model_output and model_output.best_result:
+            best = model_output.best_result
+            st.markdown("#### Condition A: prediction-only")
+            sample_idx = st.number_input("Evaluation row index", min_value=0, max_value=max(len(df) - 1, 0), value=0, step=1, key=f"eval_row_{name}")
+            row_eval = df.iloc[[int(sample_idx)]].copy()
+            row_features_eval = row_eval[[c for c in best.feature_columns if c in row_eval.columns]].copy()
+            try:
+                pred_eval = best.pipeline.predict(row_features_eval)[0]
+                proba_eval = best.pipeline.predict_proba(row_features_eval)[0, 1] if hasattr(best.pipeline, "predict_proba") else None
+                a_cols = st.columns(3)
+                a_cols[0].metric("Predicted class", str(pred_eval))
+                if proba_eval is not None:
+                    a_cols[1].metric("Predicted probability", f"{proba_eval:.2%}")
+                    a_cols[2].metric("Risk band", "High" if proba_eval >= 0.67 else "Medium" if proba_eval >= 0.34 else "Low")
+                st.markdown("Participants first make a decision using only this prediction output.")
+
+                st.markdown("#### Condition B: explanation-supported Copilot output")
+                if st.button("Generate evaluation explanation and recommendation", use_container_width=True, key=f"eval_explain_{name}"):
+                    with st.spinner("Generating explanation and Copilot recommendation..."):
+                        explanation = explain_model(best, row_features_eval)
+                        st.session_state.explanations[name] = explanation
+                    st.rerun()
+                explanation_for_eval = st.session_state.explanations.get(name)
+                if explanation_for_eval:
+                    st.dataframe(explanation_for_eval.local_importance.head(10), use_container_width=True)
+                    for sent in top_driver_sentences(explanation_for_eval.local_importance, 5):
+                        st.write("• " + sent)
+                    target_for_eval = model_output.target_column
+                    positive_for_eval = model_output.positive_label
+                    eval_q = "recommend action for this prediction"
+                    resp = answer_question(eval_q, df, dataset_name=name, target_column=target_for_eval, positive_label=positive_for_eval, model_output=model_output, explanation_output=explanation_for_eval, previous_context=st.session_state.chat_contexts.get(name))
+                    st.markdown(resp.answer)
+                    if resp.table is not None and not resp.table.empty:
+                        st.dataframe(resp.table, use_container_width=True)
+                    if resp.chart is not None:
+                        render_plotly_chart(resp.chart, key=f"eval_resp_chart_{name}")
+                    st.warning(resp.safety_warning)
+                else:
+                    st.info("Generate the explanation to show Condition B.")
+            except Exception as exc:
+                st.error(f"Could not create evaluation task from this row: {exc}")
+        else:
+            st.info("Train a classification model first. The evaluation task is based on prediction-only versus explanation-supported output.")
+
+    with eval_tabs[1]:
+        st.markdown("#### Participant questionnaire")
+        st.caption("Likert scale: 1 = strongly disagree, 5 = strongly agree.")
+        participant_id = st.text_input("Participant code", value=f"P{len(st.session_state.evaluation_responses)+1:02d}")
+        understanding = st.slider("I understood why the prediction was made.", 1, 5, 3)
+        trust = st.slider("I trusted the output appropriately.", 1, 5, 3)
+        usefulness = st.slider("The recommendation was useful for decision support.", 1, 5, 3)
+        usability = st.slider("The system was easy to use.", 1, 5, 3)
+        confidence = st.slider("I felt more confident choosing an action.", 1, 5, 3)
+        safety_awareness = st.slider("The system made clear that human review is required.", 1, 5, 3)
+        comments = st.text_area("Optional comments")
+        if st.button("Save evaluation response", use_container_width=True):
+            st.session_state.evaluation_responses.append({
+                "dataset": name,
+                "participant_id": participant_id,
+                "understanding": understanding,
+                "trust": trust,
+                "usefulness": usefulness,
+                "usability": usability,
+                "decision_confidence": confidence,
+                "safety_awareness": safety_awareness,
+                "comments": comments,
+            })
+            st.success("Evaluation response saved in this Streamlit session. Download responses from the next tab before closing the app.")
+
+    with eval_tabs[2]:
+        responses = pd.DataFrame(st.session_state.evaluation_responses)
+        if responses.empty:
+            st.info("No evaluation responses saved yet.")
+        else:
+            st.dataframe(responses, use_container_width=True)
+            metrics_cols = ["understanding", "trust", "usefulness", "usability", "decision_confidence", "safety_awareness"]
+            if all(c in responses.columns for c in metrics_cols):
+                means = responses[metrics_cols].mean().reset_index()
+                means.columns = ["measure", "average_score"]
+                fig_eval = px.bar(means, x="measure", y="average_score", title="Average evaluation scores")
+                render_plotly_chart(fig_eval, key=f"eval_scores_{name}")
+            st.download_button("Download evaluation responses CSV", responses.to_csv(index=False), file_name="evaluation_responses.csv", mime="text/csv", use_container_width=True)
+
+
+with main_tabs[8]:
+    st.markdown("### Small-scale and large-scale readiness")
+    st.caption("Use this tab to show that the prototype works for the main small-scale dissertation case study and has a clear pathway for larger structured datasets.")
+
+    prof = dataset_profile(df)
+    rows = int(prof.get("rows", len(df)))
+    cols_count = int(prof.get("columns", len(df.columns)))
+    memory_mb = float(prof.get("memory_mb", 0) or 0)
+    if rows < 100_000:
+        scale_label = "Small / medium proof-of-concept dataset"
+        scale_msg = "Suitable for full Streamlit workflow: cleaning, EDA, model training, explanation, Copilot and evaluation."
+    elif rows < 1_000_000:
+        scale_label = "Large dataset"
+        scale_msg = "Suitable for cleaning, aggregated EDA and business insight; model training should use sampling or backend services."
+    else:
+        scale_label = "Very large dataset"
+        scale_msg = "Use aggregated analysis and sampling locally; production deployment should use database, batch jobs or distributed processing."
+
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Rows", f"{rows:,}")
+    s2.metric("Columns", f"{cols_count:,}")
+    s3.metric("Memory", f"{memory_mb:.2f} MB")
+    s4.metric("Scale category", scale_label)
+    st.info(scale_msg)
+
+    st.markdown("#### Two-level evaluation strategy")
+    strategy = pd.DataFrame([
+        {"Level": "Small-scale implementation", "Dataset example": "IBM/Telco Customer Churn", "What is demonstrated": "Full end-to-end workflow: cleaning, EDA, classification, SHAP, Copilot recommendation and user evaluation", "Evidence to collect": "Screenshots, model metrics, explanation output, questionnaire responses"},
+        {"Level": "Large-scale robustness", "Dataset example": "UCI Online Retail / Online Retail II / operations data", "What is demonstrated": "Large upload, cleaning, aggregation, EDA, business insight and sampled modelling where relevant", "Evidence to collect": "Rows processed, memory, sampling size, runtime notes, charts and exported report"},
+        {"Level": "Enterprise-scale design", "Dataset example": "Production data warehouse or data lake", "What is demonstrated": "Scalable architecture rather than full implementation", "Evidence to collect": "Architecture diagram, RBAC/audit/monitoring plan, limitations and future work"},
+    ])
+    st.dataframe(strategy, use_container_width=True, hide_index=True)
+
+    st.markdown("#### Local scaling controls")
+    local_controls = pd.DataFrame([
+        {"Challenge": "Large upload", "Current control": "Dataset profile and memory display", "Production extension": "Object storage / data lake ingestion"},
+        {"Challenge": "Slow charts", "Current control": "Sampling for display and aggregated EDA", "Production extension": "Pre-aggregations, materialised views, query engine"},
+        {"Challenge": "Slow model training", "Current control": "Configurable max training rows", "Production extension": "Scheduled training jobs or scalable ML service"},
+        {"Challenge": "Explanation cost", "Current control": "SHAP where possible, fallback importance", "Production extension": "Cached explanations and explanation service"},
+        {"Challenge": "Governance", "Current control": "Safety warnings and dataset-grounded answers", "Production extension": "RBAC, audit logs, model registry and monitoring"},
+    ])
+    st.dataframe(local_controls, use_container_width=True, hide_index=True)
+
+    if st.button("Record scale evidence for this dataset", use_container_width=True):
+        st.session_state.scale_evidence.append({
+            "dataset": name,
+            "rows": rows,
+            "columns": cols_count,
+            "memory_mb": memory_mb,
+            "scale_category": scale_label,
+            "domain": detect_business_domain(df),
+            "classification_model_trained": bool(model_output and model_output.best_result),
+            "regression_model_trained": bool(regression_output and regression_output.best_result),
+        })
+        st.success("Scale evidence recorded for this session.")
+
+    evidence_df = pd.DataFrame(st.session_state.scale_evidence)
+    if not evidence_df.empty:
+        st.markdown("#### Recorded scale evidence")
+        st.dataframe(evidence_df, use_container_width=True, hide_index=True)
+        st.download_button("Download scale evidence CSV", evidence_df.to_csv(index=False), file_name="scale_evidence.csv", mime="text/csv", use_container_width=True)
+
+    scale_doc = Path(__file__).parent / "docs" / "scalability" / "small_large_scale_strategy.md"
+    if scale_doc.exists():
+        st.download_button("Download small/large-scale strategy", scale_doc.read_text(encoding="utf-8"), file_name="small_large_scale_strategy.md", mime="text/markdown", use_container_width=True)
+
+    st.markdown("#### Enterprise extension architecture")
+    st.code("""
+Frontend UI
+  -> API gateway / FastAPI backend
+  -> Data ingestion and validation service
+  -> Database / data lake / warehouse
+  -> Model training and model registry service
+  -> Explanation service
+  -> Business recommendation service
+  -> Audit log, RBAC, monitoring and human approval workflow
+""", language="text")
+
+with main_tabs[9]:
     st.markdown("### Export evidence")
     markdown = make_markdown_report(name, df, report, model_output, st.session_state.explanations.get(name))
     st.download_button("Download Markdown report", markdown, file_name=f"{name}_copilot_report.md", mime="text/markdown", use_container_width=True)
@@ -569,3 +852,223 @@ with main_tabs[7]:
     if report:
         st.download_button("Download cleaning report CSV", report.to_dataframe().to_csv(index=False), file_name=f"{name}_cleaning_report.csv", mime="text/csv", use_container_width=True)
 
+
+
+with main_tabs[10]:
+    st.markdown("### Visual Analytics Copilot Dashboard")
+    st.caption(
+        "This dashboard gives the prototype a BI-style evidence layer. "
+        "Charts are generated from the active uploaded dataset and are linked to business interpretation, not decorative visuals."
+    )
+
+    binary_targets_visual = detect_binary_targets(df)
+    visual_target = None
+    visual_positive = None
+    if model_output:
+        visual_target = model_output.target_column
+        visual_positive = model_output.positive_label
+    elif binary_targets_visual:
+        visual_target = binary_targets_visual[0]
+        try:
+            visual_positive = infer_positive_label(df[visual_target])
+        except Exception:
+            visual_positive = None
+
+    dashboard = build_visual_dashboard(
+        df,
+        dataset_name=name,
+        target_col=visual_target,
+        positive_label=visual_positive,
+        max_figures=10,
+    )
+
+    st.info(dashboard["large_dataset_note"])
+    st.markdown("#### Executive visual summary")
+    kpi_cols = st.columns(4)
+    for idx, card in enumerate(dashboard["cards"][:8]):
+        with kpi_cols[idx % 4]:
+            st.markdown(
+                f"<div class='card'><div class='metric-label'>{card.label}</div>"
+                f"<div class='metric-value'>{card.value}</div>"
+                f"<div class='small-muted'>{card.note}</div></div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("#### Recommended charts for this dataset")
+    st.caption(
+        "The system selects charts based on detected dataset type, target availability, date/product/customer fields, "
+        "data quality and scale. Large datasets are summarised using aggregation or sampling."
+    )
+    figures = dashboard.get("figures", [])
+    if not figures:
+        st.warning("No suitable visual charts could be created for this dataset. Check whether columns have usable numeric, categorical, date or target values.")
+    else:
+        for idx, visual in enumerate(figures):
+            st.markdown(f"#### {idx + 1}. {visual.title}")
+            st.caption(visual.description)
+            render_plotly_chart(visual.fig, key=f"visual_dashboard_{name}_{idx}_{visual.title}")
+            if visual.evidence is not None and not visual.evidence.empty:
+                with st.expander("Show evidence table for this chart"):
+                    st.dataframe(visual.evidence.head(30), use_container_width=True, hide_index=True)
+
+
+
+    st.markdown("#### Custom visual builder")
+    st.caption(
+        "Use this field-picker to create your own business chart from two or more columns. "
+        "This is more reliable than drag-and-drop in Streamlit and is easier to evaluate for the dissertation."
+    )
+    all_columns = list(df.columns)
+    numeric_columns = df.select_dtypes(include=np.number).columns.tolist()
+    categorical_columns = [c for c in all_columns if c not in numeric_columns]
+    date_like_columns = []
+    for c in all_columns:
+        if str(c).lower() in {"date", "time", "month", "year"} or any(k in str(c).lower() for k in ["date", "time", "month", "year", "invoice"]):
+            converted = pd.to_datetime(df[c], errors="coerce")
+            if converted.notna().mean() > 0.40:
+                date_like_columns.append(c)
+
+    builder_left, builder_mid, builder_right = st.columns(3)
+    with builder_left:
+        chart_type = st.selectbox(
+            "Chart type",
+            ["Bar", "Line", "Scatter", "Box", "Pie"],
+            key=f"custom_chart_type_{name}",
+            help="Bar for comparisons, line for trends, scatter for numeric relationships, box for distribution by group, pie for simple share views.",
+        )
+        x_col = st.selectbox("X / category / date field", all_columns, key=f"custom_x_{name}")
+    with builder_mid:
+        y_options = ["Record count"] + numeric_columns
+        y_col = st.selectbox("Y / numeric value", y_options, key=f"custom_y_{name}")
+        agg = st.selectbox("Aggregation", ["sum", "mean", "median", "count"], key=f"custom_agg_{name}")
+    with builder_right:
+        colour_options = ["None"] + categorical_columns
+        colour_col = st.selectbox("Optional group/colour field", colour_options, key=f"custom_colour_{name}")
+        top_n = st.slider("Top categories", min_value=5, max_value=30, value=12, step=1, key=f"custom_topn_{name}")
+
+    if st.button("Generate custom visual", use_container_width=True, key=f"generate_custom_visual_{name}"):
+        try:
+            colour = None if colour_col == "None" else colour_col
+            builder_sample = df.copy()
+            if len(builder_sample) > 100000 and chart_type in {"Scatter", "Box"}:
+                builder_sample = builder_sample.sample(100000, random_state=42)
+                st.info("Large dataset detected: the custom scatter/box chart uses a 100,000-row sample for responsiveness.")
+
+            evidence = pd.DataFrame()
+            fig = None
+            value_name = "record_count" if y_col == "Record count" else f"{agg}_{y_col}"
+
+            if chart_type == "Scatter":
+                if x_col not in numeric_columns or y_col == "Record count" or y_col not in numeric_columns:
+                    st.warning("Scatter charts need numeric X and numeric Y fields.")
+                else:
+                    fig = px.scatter(
+                        builder_sample,
+                        x=x_col,
+                        y=y_col,
+                        color=colour if colour in builder_sample.columns else None,
+                        opacity=0.65,
+                        title=f"{x_col} vs {y_col}",
+                        hover_data=[c for c in [colour] if c],
+                    )
+                    evidence = builder_sample[[c for c in [x_col, y_col, colour] if c and c in builder_sample.columns]].head(100)
+
+            elif chart_type == "Box":
+                if y_col == "Record count" or y_col not in numeric_columns:
+                    st.warning("Box charts need a numeric Y field.")
+                else:
+                    box_df = builder_sample.copy()
+                    if box_df[x_col].nunique(dropna=True) > top_n:
+                        top_values = box_df[x_col].astype("string").value_counts().head(top_n).index
+                        box_df = box_df[box_df[x_col].astype("string").isin(top_values)]
+                    fig = px.box(
+                        box_df,
+                        x=x_col,
+                        y=y_col,
+                        color=colour if colour in box_df.columns else None,
+                        points=False,
+                        title=f"Distribution of {y_col} by {x_col}",
+                    )
+                    evidence = box_df[[c for c in [x_col, y_col, colour] if c and c in box_df.columns]].head(100)
+
+            elif chart_type == "Pie":
+                if y_col == "Record count" or agg == "count":
+                    grouped = df.groupby(x_col, dropna=False).size().reset_index(name="record_count")
+                    value_name = "record_count"
+                else:
+                    grouped = getattr(df.groupby(x_col, dropna=False)[y_col], agg)().reset_index(name=value_name)
+                grouped[x_col] = grouped[x_col].astype("string").fillna("Missing")
+                evidence = grouped.sort_values(value_name, ascending=False).head(top_n)
+                fig = px.pie(evidence, names=x_col, values=value_name, hole=0.45, title=f"Share of {value_name} by {x_col}")
+
+            elif chart_type == "Line":
+                temp = df.copy()
+                is_date = x_col in date_like_columns
+                if is_date:
+                    temp[x_col] = pd.to_datetime(temp[x_col], errors="coerce")
+                    temp = temp.dropna(subset=[x_col])
+                    temp["period"] = temp[x_col].dt.to_period("M").dt.to_timestamp()
+                    group_keys = ["period"] + ([colour] if colour else [])
+                    x_plot = "period"
+                else:
+                    group_keys = [x_col] + ([colour] if colour else [])
+                    x_plot = x_col
+                if y_col == "Record count" or agg == "count":
+                    grouped = temp.groupby(group_keys, dropna=False).size().reset_index(name="record_count")
+                    value_name = "record_count"
+                else:
+                    grouped = getattr(temp.groupby(group_keys, dropna=False)[y_col], agg)().reset_index(name=value_name)
+                if not is_date:
+                    grouped = grouped.sort_values(value_name, ascending=False).head(top_n)
+                evidence = grouped.head(100)
+                fig = px.line(grouped, x=x_plot, y=value_name, color=colour if colour else None, markers=True, title=f"Trend of {value_name} by {x_col}")
+
+            else:  # Bar
+                group_keys = [x_col] + ([colour] if colour else [])
+                if y_col == "Record count" or agg == "count":
+                    grouped = df.groupby(group_keys, dropna=False).size().reset_index(name="record_count")
+                    value_name = "record_count"
+                else:
+                    grouped = getattr(df.groupby(group_keys, dropna=False)[y_col], agg)().reset_index(name=value_name)
+                grouped[x_col] = grouped[x_col].astype("string").fillna("Missing")
+                if colour:
+                    top_values = grouped.groupby(x_col)[value_name].sum().sort_values(ascending=False).head(top_n).index
+                    grouped = grouped[grouped[x_col].isin(top_values)]
+                    evidence = grouped.sort_values(value_name, ascending=False).head(100)
+                    fig = px.bar(grouped, x=x_col, y=value_name, color=colour, title=f"{value_name} by {x_col} and {colour}")
+                else:
+                    evidence = grouped.sort_values(value_name, ascending=False).head(top_n)
+                    fig = px.bar(evidence.sort_values(value_name), x=value_name, y=x_col, orientation="h", title=f"Top {x_col} by {value_name}")
+
+            if fig is not None:
+                render_plotly_chart(fig, key=f"custom_visual_{name}_{chart_type}_{x_col}_{y_col}_{colour_col}_{agg}_{top_n}")
+                st.markdown("**Evidence used for this custom chart**")
+                st.dataframe(evidence, use_container_width=True, hide_index=True)
+                st.caption("Custom visuals are generated only from the active uploaded dataset. For large datasets, charts use aggregation or sampling where needed.")
+        except Exception as exc:
+            st.error(f"Custom visual could not be generated safely: {exc}")
+
+    st.markdown("#### How these visuals improve the research contribution")
+    visual_contribution = pd.DataFrame([
+        {
+            "Improvement": "BI-style evidence layer",
+            "Why it matters": "Power BI and Tableau are strong at visual analytics, so the prototype must also show clear interactive evidence.",
+            "How implemented": "Auto-selected Plotly charts, KPI cards, data quality gauge, target views, domain dashboards and evidence tables.",
+        },
+        {
+            "Improvement": "Explainable visual decision support",
+            "Why it matters": "Graphs alone do not answer what action should be considered.",
+            "How implemented": "Charts are placed beside Copilot explanations, model evidence, business insight and human-review warnings.",
+        },
+        {
+            "Improvement": "Small and large scale readiness",
+            "Why it matters": "Large datasets cannot be visualised row-by-row inside a local Streamlit app.",
+            "How implemented": "Aggregation, top-N ranking, sampling for scatter/distribution charts and explicit large-data notes.",
+        },
+    ])
+    st.dataframe(visual_contribution, use_container_width=True, hide_index=True)
+
+    st.warning(
+        "Do not claim this visual dashboard is better than commercial BI tools. "
+        "The research contribution is the integration of visual evidence with explainable modelling, dataset-grounded Copilot answers, business recommendations and safety warnings."
+    )

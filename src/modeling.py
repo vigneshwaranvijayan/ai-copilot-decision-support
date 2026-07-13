@@ -7,9 +7,9 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier, RandomForestClassifier
+from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier, RandomForestClassifier, ExtraTreesRegressor, GradientBoostingRegressor, RandomForestRegressor
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -17,16 +17,20 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     roc_auc_score,
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score,
 )
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 try:  # optional dependency
-    from xgboost import XGBClassifier  # type: ignore
+    from xgboost import XGBClassifier, XGBRegressor  # type: ignore
     XGBOOST_AVAILABLE = True
 except Exception:  # pragma: no cover
     XGBClassifier = None
+    XGBRegressor = None
     XGBOOST_AVAILABLE = False
 
 
@@ -366,3 +370,206 @@ def transformed_matrix(pipeline: Pipeline, X: pd.DataFrame):
     if preprocess is None:
         raise ValueError("Pipeline has no preprocessor")
     return preprocess.transform(X)
+
+# ---------------------------------------------------------------------------
+# Optional regression mode for multi-dataset robustness
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RegressionModelResult:
+    model_name: str
+    pipeline: Pipeline
+    metrics: Dict[str, float]
+    target_column: str
+    feature_columns: List[str]
+    X_test: pd.DataFrame
+    y_test: pd.Series
+    y_pred: np.ndarray
+    sampled_training_rows: int
+    notes: str = ""
+
+
+@dataclass
+class RegressionTrainingOutput:
+    results: List[RegressionModelResult]
+    best_result: Optional[RegressionModelResult]
+    leaderboard: pd.DataFrame
+    skipped_models: Dict[str, str]
+    target_column: str
+    target_summary: pd.DataFrame
+
+
+REGRESSION_TARGET_HINTS = [
+    "sales", "revenue", "profit", "amount", "total", "price", "monthlycharges",
+    "income", "salary", "score", "rating", "quantity", "units", "duration",
+    "deliverytime", "resolutiontime", "cost", "value", "balance",
+]
+
+
+def detect_regression_targets(df: pd.DataFrame, max_unique_ratio: float = 0.05) -> List[str]:
+    """Detect numeric columns that are plausible continuous regression targets."""
+    candidates: List[Tuple[int, str]] = []
+    n = max(len(df), 1)
+    for col in df.select_dtypes(include=np.number).columns:
+        s_col = df[col].dropna()
+        if s_col.empty:
+            continue
+        unique_count = int(s_col.nunique(dropna=True))
+        if unique_count <= 2:
+            continue
+        lower = col.lower().replace("_", "")
+        if any(token in lower for token in ["id", "phone", "postcode", "zip"]):
+            continue
+        unique_ratio = unique_count / n
+        score = unique_count
+        for idx, hint in enumerate(REGRESSION_TARGET_HINTS):
+            if hint in lower:
+                score += 100 - idx
+        if unique_ratio < max_unique_ratio and score < 80:
+            continue
+        candidates.append((score, col))
+    return [c for _, c in sorted(candidates, key=lambda x: (x[0], x[1]), reverse=True)]
+
+
+def get_candidate_regression_models(include_xgboost: bool = True, random_state: int = 42) -> Dict[str, object]:
+    models: Dict[str, object] = {
+        "Linear Regression": LinearRegression(),
+        "Ridge Regression": Ridge(alpha=1.0, random_state=random_state),
+        "Random Forest Regressor": RandomForestRegressor(
+            n_estimators=250, min_samples_leaf=2, random_state=random_state, n_jobs=-1,
+        ),
+        "Extra Trees Regressor": ExtraTreesRegressor(
+            n_estimators=250, min_samples_leaf=2, random_state=random_state, n_jobs=-1,
+        ),
+        "Gradient Boosting Regressor": GradientBoostingRegressor(random_state=random_state),
+    }
+    if include_xgboost and XGBOOST_AVAILABLE and "XGBRegressor" in globals() and XGBRegressor is not None:
+        models["XGBoost Regressor"] = XGBRegressor(
+            n_estimators=250,
+            learning_rate=0.06,
+            max_depth=4,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            objective="reg:squarederror",
+            random_state=random_state,
+            n_jobs=-1,
+        )
+    return models
+
+
+def _regression_metrics(y_true: pd.Series, y_pred: np.ndarray) -> Dict[str, float]:
+    y_true_num = pd.to_numeric(y_true, errors="coerce")
+    y_pred_num = np.asarray(y_pred, dtype=float)
+    mask = y_true_num.notna() & np.isfinite(y_pred_num)
+    if not mask.any():
+        return {"mae": np.nan, "rmse": np.nan, "r2": np.nan}
+    yt = y_true_num[mask].to_numpy(dtype=float)
+    yp = y_pred_num[mask]
+    try:
+        rmse = float(mean_squared_error(yt, yp, squared=False))
+    except TypeError:
+        rmse = float(np.sqrt(mean_squared_error(yt, yp)))
+    return {
+        "mae": float(mean_absolute_error(yt, yp)),
+        "rmse": rmse,
+        "r2": float(r2_score(yt, yp)) if len(np.unique(yt)) > 1 else np.nan,
+    }
+
+
+def _sample_for_regression(df: pd.DataFrame, target: str, max_rows: int, random_state: int) -> pd.DataFrame:
+    working = df.dropna(subset=[target]).copy()
+    if working.shape[0] <= max_rows:
+        return working
+    return working.sample(max_rows, random_state=random_state)
+
+
+def train_regression_models(
+    df: pd.DataFrame,
+    target_column: str,
+    include_xgboost: bool = True,
+    test_size: float = 0.2,
+    random_state: int = 42,
+    max_training_rows: int = 120_000,
+) -> RegressionTrainingOutput:
+    """Train candidate regression models for numeric business outcomes.
+
+    This is an optional robustness mode. The main dissertation evaluation remains
+    binary customer churn classification with SHAP and Copilot explanation.
+    """
+    if target_column not in df.columns:
+        raise KeyError(f"Target column not found: {target_column}")
+    if not pd.api.types.is_numeric_dtype(df[target_column]):
+        raise ValueError("The regression target must be numeric.")
+    working = _sample_for_regression(df, target_column, max_training_rows, random_state)
+    y = pd.to_numeric(working[target_column], errors="coerce")
+    working = working[y.notna()].copy()
+    y = y[y.notna()]
+    if working.shape[0] < 20:
+        raise ValueError("Need at least 20 non-missing rows for regression mode.")
+    if y.nunique(dropna=True) <= 2:
+        raise ValueError("This looks like a binary target. Use classification mode instead.")
+
+    target_summary = pd.DataFrame([
+        {"statistic": "rows_used", "value": int(working.shape[0])},
+        {"statistic": "mean", "value": float(y.mean())},
+        {"statistic": "median", "value": float(y.median())},
+        {"statistic": "std", "value": float(y.std())},
+        {"statistic": "min", "value": float(y.min())},
+        {"statistic": "max", "value": float(y.max())},
+    ])
+
+    feature_columns = [c for c in working.columns if c != target_column]
+    X = prepare_features_for_model(working[feature_columns].copy())
+    keep_cols = [c for c in X.columns if X[c].notna().sum() > 0 and X[c].nunique(dropna=True) > 1]
+    X = X[keep_cols]
+    if not keep_cols:
+        raise ValueError("No usable feature columns remain after preprocessing.")
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state
+    )
+    models = get_candidate_regression_models(include_xgboost=include_xgboost, random_state=random_state)
+    results: List[RegressionModelResult] = []
+    skipped: Dict[str, str] = {}
+
+    for model_name, estimator in models.items():
+        try:
+            pipeline = Pipeline(steps=[("preprocess", build_preprocessor(X_train)), ("model", estimator)])
+            pipeline.fit(X_train, y_train)
+            y_pred = pipeline.predict(X_test)
+            metrics = _regression_metrics(y_test, y_pred)
+            results.append(
+                RegressionModelResult(
+                    model_name=model_name,
+                    pipeline=pipeline,
+                    metrics=metrics,
+                    target_column=target_column,
+                    feature_columns=keep_cols,
+                    X_test=X_test,
+                    y_test=y_test,
+                    y_pred=np.asarray(y_pred),
+                    sampled_training_rows=working.shape[0],
+                    notes="Optional regression robustness mode; not the main churn evaluation workflow.",
+                )
+            )
+        except Exception as exc:
+            skipped[model_name] = str(exc)
+
+    if not results:
+        raise RuntimeError("No regression model could be trained successfully. Check the dataset and numeric target column.")
+
+    leaderboard = pd.DataFrame([
+        {
+            "model": r.model_name,
+            "mae": round(r.metrics["mae"], 4) if not np.isnan(r.metrics["mae"]) else np.nan,
+            "rmse": round(r.metrics["rmse"], 4) if not np.isnan(r.metrics["rmse"]) else np.nan,
+            "r2": round(r.metrics["r2"], 4) if not np.isnan(r.metrics["r2"]) else np.nan,
+            "training_rows": r.sampled_training_rows,
+        }
+        for r in results
+    ])
+    leaderboard["r2_sort"] = leaderboard["r2"].fillna(-999)
+    leaderboard = leaderboard.sort_values(["r2_sort", "rmse", "mae"], ascending=[False, True, True]).drop(columns=["r2_sort"]).reset_index(drop=True)
+    best_name = leaderboard.loc[0, "model"]
+    best = next(r for r in results if r.model_name == best_name)
+    return RegressionTrainingOutput(results, best, leaderboard, skipped, target_column, target_summary)

@@ -10,7 +10,7 @@ The project is designed for an MSc dissertation. The **main evaluated case study
 
 ---
 
-## Supervisor feedback addressed in v12.2
+## Supervisor feedback addressed in v12
 
 This version explicitly addresses the research concerns raised during supervision:
 
@@ -229,7 +229,7 @@ The system provides suggestions, but it does **not** make final business, financ
 
 ## Visual Analytics dashboard
 
-The v12.2 version adds a **Visual Analytics** tab so the prototype can be demonstrated more like a modern analytics product while staying academically controlled.
+The v12 version adds a **Visual Analytics** tab so the prototype can be demonstrated more like a modern analytics product while staying academically controlled.
 
 The dashboard includes:
 
@@ -241,24 +241,23 @@ The dashboard includes:
 - domain-specific charts for churn, customer feedback, sales/retail, bank marketing, HR and operations datasets;
 - correlation heatmaps and numeric distributions where appropriate;
 - chart evidence tables;
-- scale-aware notes for large datasets;
-- a **custom visual builder** where users can choose X/category/date fields, numeric Y fields, aggregation, optional group/colour field and chart type.
+- scale-aware notes for large datasets.
 
 This does not claim to replace Power BI or Tableau. The research contribution is that each visual output is linked to uploaded-data evidence, model explanations, Copilot interpretation, business suggestions and safety warnings.
 
 ---
 
-## Research gap evidence
+## Research Gap tab
 
-Research-gap and novelty material is kept in the GitHub documentation rather than shown as a main app tab. This keeps the live prototype focused on user-facing decision support while still providing dissertation evidence.
+The app includes a **Gap & Novelty** tab. This tab summarises:
 
-Key files:
+- the core research gap;
+- why commercial BI Copilots do not remove the dissertation contribution;
+- the difference between BI Copilot tools, XAI tools, conversational analytics and this prototype;
+- the project’s claimed contribution;
+- downloadable research gap notes and a 40+ paper literature matrix.
 
-```text
-docs/research/literature_review_matrix.md
-docs/research/research_gap_and_novelty.md
-docs/research/market_comparison.md
-```
+Use this tab when discussing the project with the supervisor or examiner.
 
 ---
 
@@ -333,7 +332,7 @@ Responses can be downloaded as CSV for analysis.
 ## Folder structure
 
 ```text
-ai_copilot_v12_2_visual_builder_fixed/
+ai_copilot_v12_visual_analytics_copilot/
 ├── app.py
 ├── README.md
 ├── requirements.txt
@@ -420,7 +419,7 @@ Suggested commit message:
 
 ```bash
 git add .
-git commit -m "Add v12.2 visual builder and feedback issue analysis"
+git commit -m "Add v12 visual analytics copilot dashboard"
 git push
 ```
 
@@ -445,8 +444,8 @@ The dissertation should state these limitations clearly:
 
 > This project develops a dataset-grounded Explainable AI Copilot for operational business decision support. The contribution is not a new machine-learning algorithm or a direct commercial replacement for BI Copilot platforms. Instead, the project investigates a controlled and reproducible workflow that integrates uploaded-data preparation, exploratory analysis, predictive modelling, explainable AI, plain-English Copilot interpretation, business-action recommendation, safety warnings and user evaluation. Customer churn is used as the primary evaluated case study, while additional datasets demonstrate robustness across business scenarios and support a small-to-large-scale design discussion.
 
-## v12.2 test result
+## v12 test result
 
 ```text
-25 passed
+24 passed
 ```
