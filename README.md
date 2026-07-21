@@ -1,4 +1,45 @@
+
+## v13.3 UI and workflow upgrade
+
+This version upgrades the interface based on supervisor/testing feedback:
+
+- Replaced crowded top title and main tab bar with a compact dashboard and button-style navigation.
+- Dashboard now focuses on dataset readiness, key metrics, quick model status and automatic visual preview.
+- Combined related pages into clearer workflow sections:
+  - Cleaning & EDA
+  - Modeling & Prediction Explanation
+  - Business Improvements
+  - Chat
+  - Evaluation
+  - Export Data
+  - Visualization
+- Improved Copilot chat presentation with latest-first answers and fixed bottom chat input.
+- Added export of Copilot chat questions, answers, warnings and evidence row counts.
+- Kept automatic modelling once after upload and manual model retraining.
+- Kept Google Drive/URL/API/PostgreSQL/MongoDB integration support.
+- Fixed Streamlit sidebar collapse/expand usability by not hiding the Streamlit header element required for sidebar controls.
+
+
 # Dataset-Grounded Explainable AI Copilot for Operational Business Decision Support
+
+## v13.2 QA and reviewer-readiness fixes
+
+This version improves the Copilot's reliability during supervisor/reviewer testing:
+
+- Refuses bank-marketing/campaign questions when the active dataset is actually Telco churn.
+- Returns a clear FAIL-style explanation when requested evidence such as `balance` is missing.
+- Answers `target column` questions directly from the selected modelling target.
+- Routes churn-risk factor questions to SHAP/fallback model drivers instead of simple target distribution.
+- Adds a decision-support suitability verdict for model-quality questions.
+- Adds numeric-to-target relationship evidence for questions such as `does balance affect campaign response`.
+- Tightens customer-feedback concern detection so neutral service/charge words are not counted as negative by themselves.
+
+
+## v13.1 Feedback Evidence Fix
+
+This update improves the customer-feedback Copilot answer quality. Negative feedback evidence is now stricter and more explainable: the system avoids treating broad service words as negative by default, avoids counting standalone "not" as negative, and adds a clearer concern-evidence trace. Feedback improvement answers now show the top improvement priorities directly in the visible Copilot response, followed by the detailed evidence table and chart.
+
+Validation evidence: `python -m py_compile app.py src/*.py` passed and `python -m pytest -q` returned 25 passed.
 
 ## Project title
 
@@ -450,3 +491,23 @@ The dissertation should state these limitations clearly:
 ```text
 25 passed
 ```
+
+
+## v13 Data-Integrated Dataset-Grounded Upgrade
+
+This version keeps the previous Explainable AI Copilot features and adds the new supervisor-aligned architecture:
+
+- Local upload support: CSV, TSV, Excel, JSON and ZIP.
+- Public URL/API support: CSV, JSON and Excel links.
+- Google Drive / Google Sheets shared-link import.
+- Optional PostgreSQL and MongoDB connectors for live integrated data.
+- Dataset readiness gates with PASS / WARNING / FAIL status.
+- Data-quality score and readiness evidence shown before modelling and Copilot answers.
+- Automatic classification modelling once after data load when a binary target is detected.
+- Manual classification and regression modelling remain available.
+- Modern visual analytics with automatically selected graphs and a manual custom visual builder.
+- Dataset-grounded Copilot answers with question understanding, data source, readiness status, columns used, evidence, limitations and safety warning.
+- Business improvement suggestions generated from uploaded/integrated dataset evidence.
+- Session and SQLite audit-log export for dissertation evidence.
+
+The main evaluated case study remains customer churn. Bank marketing, online retail/sales and customer feedback datasets are used as integration, robustness and scalability evidence.

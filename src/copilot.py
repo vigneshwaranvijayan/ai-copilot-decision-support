@@ -111,8 +111,19 @@ NEGATIVE_WORDS = {
     "unreliable", "cancel", "cancelled", "canceled", "churn", "leave", "leaving",
     "complaint", "complaints", "disappointed", "delay", "delayed", "rude", "fail",
     "failed", "broken", "weak", "difficult", "confusing", "regret", "switch",
-    "switched", "dropped", "declined", "concern", "concerns", "not", "never",
+    "switched", "dropped", "declined", "concern", "concerns", "never",
     "lack", "lacking", "disconnect", "downtime", "unacceptable",
+}
+
+THEME_NEGATIVE_HINTS = {
+    # Use concern phrases, not broad neutral terms such as "monthly" or "charge" alone.
+    # This prevents neutral generated feedback mentioning monthly charges from being counted as negative.
+    "Pricing and monthly charges": ["expensive", "overpriced", "costly", "too expensive", "too high", "high charge", "high charges", "high monthly", "billing issue", "billing issues", "billing problem", "price increase", "charge increase", "overcharged"],
+    "Contract and cancellation risk": ["cancel", "cancelled", "canceled", "churn", "leave", "leaving", "switch", "switched", "regret"],
+    "Internet/service reliability": ["slow", "unreliable", "disconnect", "downtime", "outage", "broken", "poor", "bad", "problem", "issues"],
+    "Support experience": ["rude", "delay", "delayed", "complaint", "complaints", "unhelpful", "poor", "bad", "problem", "issues"],
+    "Early-life onboarding": ["confusing", "difficult", "problem", "issues", "cancel", "churn", "regret", "not_satisfied"],
+    "Value and package fit": ["poor", "bad", "lack", "lacking", "expensive", "overpriced", "not_satisfied", "disappointed"],
 }
 
 STOP_WORDS = {
@@ -133,6 +144,25 @@ AMBIGUOUS_SMALL_COLUMNS = {"y", "id", "no", "yes"}
 
 def _dataset_source_sentence(dataset_name: str) -> str:
     return f"Source used: active uploaded dataset `{dataset_name}`."
+
+
+def _simple_readiness_status(df: pd.DataFrame) -> Tuple[str, float, str]:
+    """Small built-in quality signal used in every Copilot answer.
+
+    This avoids importing the full validation module and keeps the Copilot
+    answer contract lightweight and deterministic.
+    """
+    if df is None or df.empty or df.shape[1] == 0:
+        return "FAIL", 0.0, "Dataset is empty or unavailable."
+    total_cells = max(int(df.shape[0] * df.shape[1]), 1)
+    missing_pct = float(df.isna().sum().sum()) / total_cells * 100
+    duplicate_pct = float(df.duplicated().sum()) / max(len(df), 1) * 100
+    score = max(0.0, round(100 - min(missing_pct * 1.2, 50) - min(duplicate_pct * 0.5, 20), 2))
+    if missing_pct >= 40:
+        return "FAIL", score, f"High missingness: {missing_pct:.2f}% of cells are missing."
+    if missing_pct >= 10 or duplicate_pct >= 25:
+        return "WARNING", score, f"Review quality before decisions: {missing_pct:.2f}% missing cells and {duplicate_pct:.2f}% duplicate rows."
+    return "PASS", score, f"Prototype quality checks passed: {missing_pct:.2f}% missing cells and {duplicate_pct:.2f}% duplicate rows."
 
 
 def _norm_text(value: Any) -> str:
@@ -237,6 +267,244 @@ def _maybe_clarify_columns(q: str, df: pd.DataFrame) -> Optional[CopilotResponse
         )
     return None
 
+
+
+def _dataset_kind_hint(df: pd.DataFrame, dataset_name: str, target_column: Optional[str]) -> str:
+    """Infer a lightweight data-domain label for safer domain-specific answers."""
+    compact_cols = {_compact(c) for c in df.columns}
+    name = _compact(dataset_name)
+    target = _compact(target_column or "")
+    if "bank" in name or {"balance", "job", "marital", "education", "housing", "loan", "campaign", "pdays", "poutcome", "y"}.issubset(compact_cols & {"balance", "job", "marital", "education", "housing", "loan", "campaign", "pdays", "poutcome", "y"}):
+        # Require several banking/marketing features, not just one generic column.
+        bank_hits = len(compact_cols & {"balance", "job", "marital", "education", "housing", "loan", "campaign", "pdays", "previous", "poutcome", "y"})
+        if bank_hits >= 4 or target in {"y", "deposit", "subscribed", "response"}:
+            return "bank_marketing"
+    if "churn" in name or target == "churn" or "churn" in compact_cols:
+        return "customer_churn"
+    if compact_cols & {"invoice", "invoiceno", "stockcode", "quantity", "unitprice", "revenue", "sales"}:
+        return "retail_sales"
+    if compact_cols & {"customerfeedback", "feedback", "review", "comment"}:
+        return "customer_feedback"
+    return "general"
+
+
+def _domain_context_guard(q: str, df: pd.DataFrame, dataset_name: str, target_column: Optional[str]) -> Optional[CopilotResponse]:
+    """Stop unsupported domain-specific questions instead of forcing them onto the active dataset.
+
+    Example: asking a bank-marketing question while the active data is Telco churn should produce a
+    clear FAIL-style answer rather than campaign suggestions from `churn`.
+    """
+    tokens = _query_tokens(q)
+    compact_cols = {_compact(c) for c in df.columns}
+    kind = _dataset_kind_hint(df, dataset_name, target_column)
+    source = _dataset_source_sentence(dataset_name)
+
+    # Explicit missing column checks for common benchmark/business questions.
+    required_terms = {
+        "balance": {"balance", "accountbalance"},
+    }
+    for term, possible_cols in required_terms.items():
+        if term in tokens and not (compact_cols & possible_cols):
+            table = pd.DataFrame([{
+                "requested_evidence": term,
+                "status": "FAIL",
+                "reason": f"The active dataset does not contain a `{term}` column.",
+                "available_target": target_column or "not selected",
+            }])
+            return CopilotResponse(
+                f"I cannot answer this reliably because the question asks about `{term}`, but the active dataset does not contain a `{term}` column. {source}",
+                table=table,
+                interpreted_question=q,
+                safety_warning="No answer was generated because the required evidence is missing from the active dataset.",
+                context={"topic": "data_readiness_fail", "target_column": target_column},
+            )
+
+    bank_question = bool(tokens & {"bank", "campaign", "marketing"}) or "bankmarketing" in _compact(q)
+    response_question = bool(tokens & {"response", "accepted", "subscribe", "subscribed", "subscription", "deposit"})
+    if bank_question and kind != "bank_marketing":
+        # Allow generic words like customer/target, but refuse clear campaign/bank tasks on Telco/other data.
+        table = pd.DataFrame([{
+            "active_dataset_type": kind,
+            "requested_context": "bank marketing / campaign response",
+            "status": "FAIL",
+            "reason": "Upload/select the bank marketing dataset before asking campaign-response questions.",
+        }])
+        return CopilotResponse(
+            f"I cannot treat the active dataset as a bank marketing dataset. The current data appears to be `{kind}` and the selected target is `{target_column or 'not selected'}`. Upload/select the bank marketing dataset, then ask this question again. {source}",
+            table=table,
+            interpreted_question=q,
+            safety_warning="Domain mismatch: the Copilot refused to generate unsupported marketing conclusions from the wrong dataset.",
+            context={"topic": "domain_mismatch", "target_column": target_column},
+        )
+    if response_question and kind == "customer_churn" and not (compact_cols & {"response", "campaign", "y", "deposit", "subscribed"}):
+        table = pd.DataFrame([{
+            "requested_context": "campaign/marketing response",
+            "active_target": target_column or "not selected",
+            "status": "FAIL",
+            "reason": "The active customer-churn dataset does not contain campaign response fields.",
+        }])
+        return CopilotResponse(
+            f"I cannot answer campaign-response questions from the current churn dataset because it does not contain campaign/response fields. {source}",
+            table=table,
+            interpreted_question=q,
+            safety_warning="No campaign recommendation was generated because the required campaign evidence is missing.",
+            context={"topic": "domain_mismatch", "target_column": target_column},
+        )
+    return None
+
+
+def _target_column_response(q: str, df: pd.DataFrame, dataset_name: str, target_column: Optional[str], positive_label: Optional[Any]) -> Optional[CopilotResponse]:
+    tokens = _query_tokens(q)
+    compact = _compact(q)
+    if not (("target" in tokens and "column" in tokens) or "targetcolumn" in compact or "selectedtarget" in compact):
+        return None
+    source = _dataset_source_sentence(dataset_name)
+    if target_column and target_column in df.columns:
+        unique_values = df[target_column].dropna().astype(str).value_counts().head(10).to_dict()
+        table = pd.DataFrame([{
+            "selected_target_column": target_column,
+            "positive_label": positive_label if positive_label is not None else "auto/not specified",
+            "unique_values_preview": str(unique_values),
+            "row_count": len(df),
+        }])
+        return CopilotResponse(
+            f"The selected target column for the active dataset is `{target_column}`. Positive label: `{positive_label}`. {source}",
+            table=table,
+            interpreted_question=q,
+            context={"topic": "target_column", "target_column": target_column},
+        )
+    table = pd.DataFrame({"candidate_target_columns": _target_candidates(df)})
+    return CopilotResponse(
+        f"No target column is currently selected. Choose one of the candidate binary target columns, then run modelling. {source}",
+        table=table,
+        interpreted_question=q,
+        safety_warning="Model answers require an explicitly selected target column.",
+        context={"topic": "target_column"},
+    )
+
+
+def _target_candidates(df: pd.DataFrame) -> List[str]:
+    candidates: List[str] = []
+    for col in df.columns:
+        nunique = int(df[col].dropna().nunique())
+        name = _compact(col)
+        if 2 <= nunique <= 5 or name in {"churn", "y", "target", "response", "deposit", "subscribed", "attrition", "exited"}:
+            candidates.append(col)
+    return candidates[:12]
+
+
+
+def _numeric_target_relationship_response(
+    q: str,
+    df: pd.DataFrame,
+    target_column: Optional[str],
+    positive_label: Optional[Any],
+    dataset_name: str,
+) -> Optional[CopilotResponse]:
+    """Answer questions like 'does balance affect campaign response?' using binned target rate."""
+    tokens = _query_tokens(q)
+    compact = _compact(q)
+    relationship_terms = {"affect", "affects", "influence", "influences", "impact", "impacts", "linked", "link", "relationship", "correlation", "correlate", "effect"}
+    if not target_column or target_column not in df.columns:
+        return None
+    if not (tokens & relationship_terms or "affect" in compact or "influence" in compact):
+        return None
+    explicit = _explicit_column_mentions(q, list(df.columns))
+    numeric_cols = [c for c in explicit if c != target_column and c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+    # In phrases such as "does balance affect campaign response", `campaign` is often
+    # part of the response context, while `balance` is the predictor being tested.
+    # Prefer non-response/context numeric columns when more than one numeric column is mentioned.
+    if len(numeric_cols) > 1:
+        preferred = [c for c in numeric_cols if _compact(c) not in {"campaign", "response", "y", "target"}]
+        if preferred:
+            numeric_cols = preferred
+    if not numeric_cols:
+        candidate = _safe_best_column(q, df, allow_target=False, target_column=target_column)
+        if candidate and candidate in df.columns and pd.api.types.is_numeric_dtype(df[candidate]):
+            numeric_cols = [candidate]
+    if not numeric_cols:
+        return None
+    num_col = numeric_cols[0]
+    work = df[[num_col, target_column]].copy()
+    work[num_col] = pd.to_numeric(work[num_col], errors="coerce")
+    work = work.dropna(subset=[num_col, target_column])
+    if work.empty or work[num_col].nunique() < 2:
+        return CopilotResponse(
+            f"I found `{num_col}`, but there is not enough numeric variation to compare it with `{target_column}`. {_dataset_source_sentence(dataset_name)}",
+            interpreted_question=q,
+            context={"topic": "target_relationship", "rank_col": num_col, "target_column": target_column},
+        )
+    pos = positive_label if positive_label is not None else work[target_column].dropna().value_counts().index[0]
+    try:
+        work["__band"] = pd.qcut(work[num_col], q=min(4, work[num_col].nunique()), duplicates="drop")
+    except Exception:
+        work["__band"] = pd.cut(work[num_col], bins=min(4, max(2, work[num_col].nunique())), duplicates="drop")
+    work["__positive"] = (work[target_column].astype(str) == str(pos)).astype(int)
+    table = work.groupby("__band", observed=False).agg(
+        min_value=(num_col, "min"),
+        max_value=(num_col, "max"),
+        record_count=(target_column, "size"),
+        positive_rate=("__positive", "mean"),
+    ).reset_index()
+    table["band"] = table["__band"].astype(str)
+    table["positive_rate_percent"] = (table["positive_rate"] * 100).round(2)
+    table = table[["band", "min_value", "max_value", "record_count", "positive_rate_percent"]]
+    chart = px.bar(table, x="band", y="positive_rate_percent", hover_data=["record_count"], title=f"{target_column} positive rate by {num_col} band")
+    high = table.loc[table["positive_rate_percent"].idxmax()]
+    low = table.loc[table["positive_rate_percent"].idxmin()]
+    answer = (
+        f"I compared `{num_col}` bands against the selected target `{target_column}`. "
+        f"The highest positive-rate band is {high['band']} with {high['positive_rate_percent']:.2f}% positive rate; "
+        f"the lowest is {low['band']} with {low['positive_rate_percent']:.2f}%. "
+        "This shows an observed dataset pattern, not proof of causation. "
+        f"{_dataset_source_sentence(dataset_name)}"
+    )
+    return CopilotResponse(
+        answer,
+        table=table,
+        chart=chart,
+        interpreted_question=q,
+        safety_warning="Correlation is not causation. Use this as evidence for investigation, not as an automatic decision rule.",
+        context={"topic": "target_relationship", "rank_col": num_col, "target_column": target_column},
+    )
+
+
+def _highest_target_segments(df: pd.DataFrame, target_column: Optional[str], positive_label: Optional[Any], dataset_name: str, q: str) -> Optional[CopilotResponse]:
+    tokens = _query_tokens(q)
+    if not target_column or target_column not in df.columns:
+        return None
+    if not (tokens & {"highest", "high", "risk", "risky", "group", "groups", "segment", "segments"}):
+        return None
+    if not (_is_explicit_column(q, target_column) or _compact(target_column) in _compact(q) or "churn" in tokens or "risk" in tokens):
+        return None
+    pos = positive_label if positive_label is not None else df[target_column].dropna().value_counts().index[0]
+    min_count = max(20, int(len(df) * 0.01))
+    id_like = set(_find_id_like_columns(df))
+    rows: List[Dict[str, Any]] = []
+    for col in _categorical_columns(df, max_unique=80):
+        if col == target_column or col in id_like:
+            continue
+        temp = df[[col, target_column]].dropna()
+        if temp.empty:
+            continue
+        for value, subset in temp.groupby(col):
+            count = len(subset)
+            if count < min_count:
+                continue
+            rate = (subset[target_column].astype(str) == str(pos)).mean() * 100
+            rows.append({"segment_column": col, "segment_value": value, "positive_rate_percent": round(rate, 2), "record_count": count})
+    if not rows:
+        return None
+    table = pd.DataFrame(rows).sort_values(["positive_rate_percent", "record_count"], ascending=[False, False]).head(20)
+    chart = px.bar(table.head(12), x="positive_rate_percent", y="segment_value", color="segment_column", orientation="h", hover_data=["record_count"], title=f"Highest {target_column} positive-rate segments")
+    top = table.iloc[0]
+    return CopilotResponse(
+        f"The highest observed `{target_column}` positive-rate segment is `{top['segment_column']} = {top['segment_value']}` with {top['positive_rate_percent']:.2f}% positive rate across {int(top['record_count']):,} records. {_dataset_source_sentence(dataset_name)}",
+        table=table,
+        chart=chart,
+        interpreted_question=q,
+        context={"topic": "group_segments", "target_column": target_column, "group_col": str(top['segment_column'])},
+    )
 
 # ---------------------------------------------------------------------------
 # Dataset/category/value helpers
@@ -385,8 +653,22 @@ def _score_text_rows(df: pd.DataFrame, text_col: str) -> pd.DataFrame:
     lengths: List[int] = []
     for value in scored[text_col].fillna(""):
         tokens = _text_tokens(value)
-        neg = [t for t in tokens if t in NEGATIVE_WORDS]
-        pos = [t for t in tokens if t in POSITIVE_WORDS]
+        neg: List[str] = []
+        pos: List[str] = []
+        for i, token in enumerate(tokens):
+            prev_token = tokens[i - 1] if i > 0 else ""
+            next_token = tokens[i + 1] if i + 1 < len(tokens) else ""
+            # Standalone "not" is too broad for business feedback. Count it only
+            # when it clearly negates a positive term, for example "not satisfied".
+            if token == "not" and next_token in POSITIVE_WORDS:
+                neg.append(f"not_{next_token}")
+                continue
+            if token in NEGATIVE_WORDS and token != "not":
+                neg.append(token)
+                continue
+            # Avoid counting "satisfied" as positive in phrases like "not satisfied".
+            if token in POSITIVE_WORDS and prev_token != "not":
+                pos.append(token)
         neg_counts.append(len(neg))
         pos_counts.append(len(pos))
         negative_terms.append(", ".join(dict.fromkeys(neg))[:180])
@@ -485,7 +767,10 @@ def _feedback_business_action_table(
     rows: List[Dict[str, Any]] = []
     text_series = df[text_col].fillna("").astype(str)
     text_norm = text_series.map(_norm_text)
-    neg_counts = _score_text_rows(df, text_col)["negative_keyword_count"]
+    scored_text = _score_text_rows(df, text_col)
+    neg_counts = scored_text["negative_keyword_count"]
+    pos_counts = scored_text["positive_keyword_count"]
+    sentiment_score = scored_text["sentiment_score"]
 
     for rule in BUSINESS_FEEDBACK_THEMES:
         keywords = [_norm_text(k) for k in rule["keywords"]]
@@ -504,9 +789,26 @@ def _feedback_business_action_table(
         if evidence_rows == 0:
             continue
 
-        negative_rows = int((mask & (neg_counts > 0)).sum())
+        # Negative/concern evidence is stricter than general theme matching.
+        # A row should not be counted as negative just because it contains a broad
+        # word such as "service" or "internet". It must either contain a theme-
+        # specific concern term or have more negative than positive evidence.
+        theme_negative_terms = [_norm_text(t) for t in THEME_NEGATIVE_HINTS.get(rule["theme"], [])]
+        theme_negative_mask = pd.Series(False, index=df.index)
+        matched_negative_terms: List[str] = []
+        for neg_kw in theme_negative_terms:
+            if not neg_kw:
+                continue
+            pattern = r"\b" + re.escape(neg_kw).replace(r"\ ", r"\s+") + r"\b"
+            term_mask = text_norm.str.contains(pattern, regex=True, na=False)
+            if bool(term_mask.any()):
+                matched_negative_terms.append(neg_kw)
+            theme_negative_mask = theme_negative_mask | term_mask
+
+        concern_mask = mask & ((sentiment_score > 0) | theme_negative_mask)
+        negative_rows = int(concern_mask.sum())
         sample_text = ""
-        sample_candidates = df.loc[mask & (neg_counts > 0), text_col]
+        sample_candidates = df.loc[concern_mask, text_col]
         if sample_candidates.empty:
             sample_candidates = df.loc[mask, text_col]
         if not sample_candidates.empty:
@@ -518,7 +820,7 @@ def _feedback_business_action_table(
             if len(subset) > 0:
                 target_rate = (subset.astype(str) == str(positive_label)).mean() * 100
 
-        priority_score = negative_rows * 2 + evidence_rows
+        priority_score = negative_rows * 3 + evidence_rows * 0.15
         if not np.isnan(target_rate):
             priority_score += float(target_rate) / 10
         if negative_rows >= 20 or (not np.isnan(target_rate) and target_rate >= 40):
@@ -535,6 +837,7 @@ def _feedback_business_action_table(
             "negative_evidence_rows": negative_rows,
             "target_positive_rate_percent": round(target_rate, 2) if not np.isnan(target_rate) else None,
             "matched_terms": ", ".join(dict.fromkeys(matched_terms[:10])),
+            "negative_evidence_terms": ", ".join(dict.fromkeys(matched_negative_terms[:10])),
             "business_meaning": rule["business_meaning"],
             "recommended_action": rule["recommended_action"],
             "human_review_warning": rule["safety_warning"],
@@ -545,7 +848,7 @@ def _feedback_business_action_table(
     if not rows:
         return pd.DataFrame(columns=[
             "priority", "theme", "evidence_rows", "negative_evidence_rows",
-            "target_positive_rate_percent", "matched_terms", "business_meaning",
+            "target_positive_rate_percent", "matched_terms", "negative_evidence_terms", "business_meaning",
             "recommended_action", "human_review_warning", "example_feedback", "priority_score"
         ])
     table = pd.DataFrame(rows).sort_values(
@@ -563,11 +866,19 @@ def _feedback_business_answer(table: pd.DataFrame, text_col: str, dataset_name: 
             f"{_dataset_source_sentence(dataset_name)}"
         )
     top = table.iloc[0]
+    top_items = []
+    for _, row in table.head(3).iterrows():
+        top_items.append(
+            f"**{row['theme']}** ({int(row['negative_evidence_rows']):,} concern row(s); "
+            f"action: {row['recommended_action']})"
+        )
+    top_summary = " Top improvement priorities: " + " ".join(f"{i+1}. {item}" for i, item in enumerate(top_items))
     return (
-        f"I found {len(table)} business-action themes in `{text_col}`. "
-        f"Top priority is **{top['theme']}** based on {int(top['evidence_rows']):,} matching rows "
-        f"and {int(top['negative_evidence_rows']):,} negative-evidence rows. "
-        "The table gives practical improvement ideas, the evidence terms used, and human-review warnings. "
+        f"I found {len(table)} business-action themes / actionable feedback theme(s) in `{text_col}`. "
+        f"The highest-priority concern is **{top['theme']}**, based on {int(top['negative_evidence_rows']):,} "
+        f"negative/concern evidence row(s) from {int(top['evidence_rows']):,} theme-matching row(s)."
+        f"{top_summary} "
+        "The detailed table below shows the evidence terms, business meaning, recommended action and human-review warning. "
         f"{_dataset_source_sentence(dataset_name)}"
     )
 
@@ -630,6 +941,35 @@ def _model_summary(model_output: Any) -> str:
         f"Precision={metrics.get('precision', float('nan')):.3f}, "
         f"ROC-AUC={metrics.get('roc_auc', float('nan')):.3f}. "
         "The model was trained only on the selected uploaded dataset."
+    )
+
+
+def _model_decision_support_summary(model_output: Any) -> str:
+    """Plain-English verdict for supervisor/reviewer questions about model usefulness."""
+    if model_output is None or getattr(model_output, "best_result", None) is None:
+        return "No trained model is available, so I cannot judge decision-support suitability."
+    best = model_output.best_result
+    metrics = best.metrics
+    f1 = float(metrics.get("f1", np.nan))
+    recall = float(metrics.get("recall", np.nan))
+    precision = float(metrics.get("precision", np.nan))
+    roc_auc = float(metrics.get("roc_auc", np.nan))
+    verdict = "limited"
+    if (not np.isnan(roc_auc) and roc_auc >= 0.80) and (not np.isnan(f1) and f1 >= 0.60):
+        verdict = "suitable for decision support, but not for automatic decisions"
+    elif (not np.isnan(roc_auc) and roc_auc >= 0.70) or (not np.isnan(f1) and f1 >= 0.50):
+        verdict = "moderately useful for decision support, with clear limitations"
+    caveats = []
+    if not np.isnan(precision) and precision < 0.60:
+        caveats.append("precision is below 0.60, so some flagged cases may be false positives")
+    if not np.isnan(recall) and recall < 0.60:
+        caveats.append("recall is below 0.60, so some positive cases may be missed")
+    if not caveats:
+        caveats.append("a human reviewer should still validate decisions against business context")
+    return (
+        f"Best model: **{best.model_name}**. F1={f1:.3f}, Recall={recall:.3f}, Precision={precision:.3f}, ROC-AUC={roc_auc:.3f}. "
+        f"Overall verdict: the model is **{verdict}**. Main caveat: {'; '.join(caveats)}. "
+        "Use the model to prioritise review, not to make automatic customer decisions."
     )
 
 
@@ -715,6 +1055,24 @@ def _answer_question_core(
     source = _dataset_source_sentence(dataset_name)
     tokens = _query_tokens(q)
 
+    domain_guard = _domain_context_guard(q, df, dataset_name, target_column)
+    if domain_guard is not None:
+        domain_guard.corrections = corrections
+        domain_guard.interpreted_question = q
+        return domain_guard
+
+    target_response = _target_column_response(q, df, dataset_name, target_column, positive_label)
+    if target_response is not None:
+        target_response.corrections = corrections
+        target_response.interpreted_question = q
+        return target_response
+
+    relationship_response = _numeric_target_relationship_response(q, df, target_column, positive_label, dataset_name)
+    if relationship_response is not None:
+        relationship_response.corrections = corrections
+        relationship_response.interpreted_question = q
+        return relationship_response
+
     clarification = _maybe_clarify_columns(q, df)
     if clarification is not None:
         clarification.corrections = corrections
@@ -745,12 +1103,15 @@ def _answer_question_core(
         return CopilotResponse(f"The active dataset has {count:,} duplicate rows after current cleaning. {source}", interpreted_question=q, corrections=corrections, context={"topic": "duplicates"})
 
     # 2) Model/explanation intents.
-    if tokens & {"model", "performance", "accuracy", "f1", "recall", "precision", "auc"}:
+    if tokens & {"model", "performance", "accuracy", "f1", "recall", "precision", "auc"} or "good enough" in q or "decision support" in q:
         if model_output is not None and getattr(model_output, "leaderboard", None) is not None:
-            return CopilotResponse(_model_summary(model_output) + " " + source, table=model_output.leaderboard, interpreted_question=q, corrections=corrections, context={"topic": "model", "target_column": getattr(model_output, "target_column", target_column)})
+            model_answer = _model_summary(model_output)
+            if "good enough" in q or "decision support" in q:
+                model_answer = _model_decision_support_summary(model_output)
+            return CopilotResponse(model_answer + " " + source, table=model_output.leaderboard, interpreted_question=q, corrections=corrections, context={"topic": "model", "target_column": getattr(model_output, "target_column", target_column)})
         return CopilotResponse(_model_summary(model_output) + " " + source, interpreted_question=q, corrections=corrections, context={"topic": "model"})
 
-    if tokens & {"driver", "drivers", "importance", "features", "feature", "shap"}:
+    if tokens & {"driver", "drivers", "importance", "features", "feature", "factor", "factors", "riskfactor", "riskfactors", "shap"} or ("risk" in tokens and "factor" in tokens):
         if explanation_output is not None and getattr(explanation_output, "global_importance", None) is not None:
             table = explanation_output.global_importance.head(20)
             chart = px.bar(table.head(15), x="importance", y="feature", orientation="h", title="Top model drivers") if not table.empty and "importance" in table.columns else None
@@ -850,7 +1211,7 @@ def _answer_question_core(
         answer = (
             f"The most common actionable feedback issue/theme is **{top['theme']}**, "
             f"with {int(top['evidence_rows']):,} matching row(s) and "
-            f"{int(top['negative_evidence_rows']):,} negative-evidence row(s). "
+            f"{int(top['negative_evidence_rows']):,} negative/concern evidence row(s). "
             f"Recommended action: {top['recommended_action']} {source}"
         )
         return CopilotResponse(
@@ -950,7 +1311,14 @@ def _answer_question_core(
             chart = px.bar(table, x=group_col, y=table.columns[-1], title=f"{agg.title()} {num_col} by {group_col}") if not table.empty else None
             return CopilotResponse(f"Here is `{agg}` of `{num_col}` by `{group_col}`. {source}", table=table, chart=chart, interpreted_question=q, corrections=corrections, context={"group_col": group_col, "rank_col": num_col})
 
-    # 6) Target distribution.
+    # 6) Highest target-risk segments across categorical columns.
+    segment_response = _highest_target_segments(df, target_column, positive_label, dataset_name, q)
+    if segment_response is not None:
+        segment_response.corrections = corrections
+        segment_response.interpreted_question = q
+        return segment_response
+
+    # 7) Target distribution.
     if target_column and _is_target_intent(q, target_column):
         dist = target_distribution(df, target_column)
         chart = px.bar(dist, x=target_column, y="count", title=f"Distribution of {target_column}") if not dist.empty else None
@@ -1041,14 +1409,21 @@ def _frame_copilot_answer(response: CopilotResponse, *, question: str, dataset_n
         evidence_count = "Visual chart returned."
     else:
         evidence_count = "Text evidence returned."
+    readiness_status, readiness_score, readiness_message = _simple_readiness_status(df)
     business_hint = _business_use_hint(context, question)
+    limitation = (
+        "This answer uses only the active integrated dataset plus available model/explanation artefacts. "
+        "It does not use external market, customer, HR, legal or operational context unless that data is also connected."
+    )
     response.answer = (
         "### Copilot answer\n"
         f"**Question understood as:** {response.interpreted_question or question}\n\n"
         f"**Dataset used:** `{dataset_name}` ({len(df):,} rows, {df.shape[1]:,} columns).\n\n"
+        f"**Data readiness:** {readiness_status} — quality score {readiness_score:.1f}/100. {readiness_message}\n\n"
         f"**Columns/artefacts used:** {cols_text}.\n\n"
-        f"**Evidence from the uploaded data:** {response.answer}\n\n"
+        f"**Evidence from the integrated data:** {response.answer}\n\n"
         f"**Business / decision-support use:** {business_hint}\n\n"
+        f"**Limitations:** {limitation}\n\n"
         f"**Evidence format:** {evidence_count}"
     )
     return response

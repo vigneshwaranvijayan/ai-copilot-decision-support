@@ -1,0 +1,13 @@
+Version: v13.2 Dataset-grounded Copilot QA fix
+Checks completed:
+- python -m py_compile app.py src/*.py: passed
+- python -m pytest -q: 25 passed
+
+Fixes verified:
+- Bank-marketing questions are no longer answered from the Telco churn dataset.
+- Missing requested evidence such as `balance` returns a FAIL-style explanation instead of invented campaign insight.
+- `target column` questions now return the selected modelling target rather than a generic clarification table.
+- `what factors increased churn risk` routes to SHAP/fallback model drivers instead of target distribution.
+- `is this model good enough for decision support` returns a model suitability verdict with metric caveats.
+- Numeric-to-target relationship questions such as `does balance affect campaign response` use binned target-rate evidence when the correct dataset is active.
+- Feedback improvement logic uses stricter concern terms so neutral monthly-charge/service mentions are not automatically counted as negative.

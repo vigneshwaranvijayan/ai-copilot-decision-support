@@ -158,3 +158,95 @@ def merge_datasets(
     if max_rows is not None and merged.shape[0] > max_rows:
         merged = merged.sample(max_rows, random_state=42)
     return merged
+
+# ---------------------------------------------------------------------------
+# Google Drive and database connectors
+# ---------------------------------------------------------------------------
+
+def normalise_google_drive_url(url: str) -> str:
+    """Convert common shared Google Drive/Sheets links to direct download URLs.
+
+    Supported proof-of-concept links:
+    - https://drive.google.com/file/d/<FILE_ID>/view?usp=sharing
+    - https://drive.google.com/open?id=<FILE_ID>
+    - https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit#gid=<GID>
+
+    Folder-level OAuth integration is part of the scalable architecture; the
+    local prototype supports public/shared file links for reproducibility.
+    """
+    import re
+    from urllib.parse import parse_qs, urlparse
+
+    if not url:
+        return url
+    parsed = urlparse(url.strip())
+    host = parsed.netloc.lower()
+    if "docs.google.com" in host and "/spreadsheets/" in parsed.path:
+        m = re.search(r"/spreadsheets/d/([^/]+)", parsed.path)
+        if not m:
+            return url
+        sheet_id = m.group(1)
+        gid = "0"
+        if parsed.fragment and "gid=" in parsed.fragment:
+            gid = parse_qs(parsed.fragment).get("gid", ["0"])[0]
+        if parsed.query and "gid=" in parsed.query:
+            gid = parse_qs(parsed.query).get("gid", [gid])[0]
+        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+
+    if "drive.google.com" in host:
+        qs = parse_qs(parsed.query)
+        file_id = qs.get("id", [None])[0]
+        if not file_id:
+            m = re.search(r"/file/d/([^/]+)", parsed.path)
+            file_id = m.group(1) if m else None
+        if file_id:
+            return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return url
+
+
+def load_google_drive_url(url: str, timeout: int = 30) -> LoadedDataset:
+    """Load a public/shared Google Drive file or Google Sheet into a DataFrame."""
+    direct_url = normalise_google_drive_url(url)
+    ds = load_public_url(direct_url, timeout=timeout)
+    ds.source_type = "google_drive_shared_link"
+    if not ds.notes:
+        ds.notes = "Loaded from Google Drive/Google Sheets shared link"
+    return ds
+
+
+def load_postgres_table(connection_uri: str, table_or_query: str, limit: int = 100000) -> LoadedDataset:
+    """Load a PostgreSQL table/query using SQLAlchemy when available.
+
+    The import is optional so the app can still run without database packages.
+    """
+    if not connection_uri or not table_or_query:
+        raise ValueError("Connection URI and table/query are required")
+    try:
+        from sqlalchemy import create_engine, text  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        raise ImportError("Install sqlalchemy and psycopg2-binary to use PostgreSQL integration") from exc
+    engine = create_engine(connection_uri)
+    query = table_or_query.strip()
+    if not query.lower().startswith("select"):
+        query = f"SELECT * FROM {query} LIMIT {int(limit)}"
+    elif "limit" not in query.lower():
+        query = f"SELECT * FROM ({query}) AS q LIMIT {int(limit)}"
+    df = pd.read_sql_query(text(query), engine)
+    return LoadedDataset(name="postgres_dataset", dataframe=df, source_type="postgresql", notes="Loaded from PostgreSQL")
+
+
+def load_mongo_collection(mongo_uri: str, database: str, collection: str, limit: int = 100000) -> LoadedDataset:
+    """Load documents from MongoDB using pymongo when available."""
+    if not mongo_uri or not database or not collection:
+        raise ValueError("Mongo URI, database and collection are required")
+    try:
+        from pymongo import MongoClient  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        raise ImportError("Install pymongo to use MongoDB integration") from exc
+    client = MongoClient(mongo_uri, serverSelectionTimeoutMS=8000)
+    docs = list(client[database][collection].find({}).limit(int(limit)))
+    for d in docs:
+        if "_id" in d:
+            d["_id"] = str(d["_id"])
+    df = pd.json_normalize(docs)
+    return LoadedDataset(name="mongo_dataset", dataframe=df, source_type="mongodb", notes="Loaded from MongoDB collection")

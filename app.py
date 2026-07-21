@@ -17,6 +17,9 @@ from src.data_loader import (
     dataset_profile,
     find_common_columns,
     load_public_url,
+    load_google_drive_url,
+    load_postgres_table,
+    load_mongo_collection,
     load_uploaded_files,
     merge_datasets,
 )
@@ -47,10 +50,12 @@ from src.modeling import (
 )
 from src.report import make_markdown_report
 from src.visual_analytics import build_visual_dashboard
+from src.validation import build_readiness_report, status_badge_html
+from src.persistence import record_audit_event, read_audit_events
 
 st.set_page_config(
-    page_title="Explainable AI Copilot",
-    page_icon="🤖",
+    page_title="Dataset-Grounded AI Copilot",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -78,6 +83,9 @@ def render_plotly_chart(fig, key: str) -> None:
 
 CUSTOM_CSS = """
 <style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+/* Keep Streamlit header visible so the sidebar collapse/expand control works. */
 :root { --card-bg: rgba(255,255,255,0.72); --border: rgba(49,51,63,0.12); }
 .block-container { padding-top: 1.5rem; }
 .hero {
@@ -97,8 +105,38 @@ CUSTOM_CSS = """
 .warn { color: #b45309; font-weight: 700; }
 .bad { color: #b91c1c; font-weight: 700; }
 .small-muted { color: #64748b; font-size: 0.9rem; }
+.answer-card { padding: 1.0rem 1.1rem; border-radius: 1rem; border: 1px solid rgba(15,23,42,0.10); background: linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); box-shadow: 0 10px 24px rgba(15,23,42,.06); }
+.pipeline-step { padding: .7rem; border: 1px solid rgba(100,116,139,.25); border-radius: .75rem; background: white; text-align:center; min-height: 92px; }
 .stTabs [data-baseweb="tab-list"] { gap: 0.4rem; }
 .stTabs [data-baseweb="tab"] { border-radius: 999px; padding-left: 1rem; padding-right: 1rem; }
+
+/* Compact app chrome and dashboard navigation */
+.block-container { padding-top: 0.8rem; max-width: 1500px; }
+.compact-topbar {
+  padding: .85rem 1.05rem; border-radius: 1rem;
+  background: linear-gradient(135deg,#0f172a,#1d4ed8,#0891b2);
+  color: white; box-shadow: 0 12px 30px rgba(15,23,42,.16); margin-bottom: .85rem;
+}
+.compact-topbar h2 { margin: 0; font-size: 1.25rem; line-height: 1.25; }
+.compact-topbar p { margin: .25rem 0 0 0; opacity: .9; font-size: .92rem; }
+.page-topline { padding: .65rem .9rem; border:1px solid var(--border); border-radius:.85rem; background:#fff; margin-bottom:.75rem; }
+.nav-card {
+  border: 1px solid rgba(15,23,42,.10); border-radius: 1rem; padding: .85rem;
+  background: linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);
+  box-shadow: 0 10px 24px rgba(15,23,42,.06); min-height: 92px;
+}
+.nav-card .nav-title { font-weight: 800; color:#0f172a; font-size:.98rem; }
+.nav-card .nav-text { color:#64748b; font-size:.82rem; margin-top:.2rem; }
+button[kind="secondary"], div.stButton > button {
+  border-radius: .85rem !important; min-height: 2.45rem; font-weight: 650;
+}
+.dashboard-section-title { font-size:1.05rem; font-weight:800; margin: 1rem 0 .45rem 0; color:#0f172a; }
+.chat-fixed-note { color:#64748b; font-size:.86rem; margin-bottom:.35rem; }
+div[data-testid="stChatMessage"] {
+  border: 1px solid rgba(15,23,42,.08); border-radius: 1rem; padding: .3rem .6rem;
+  background: #ffffff; box-shadow: 0 8px 20px rgba(15,23,42,.04); margin-bottom: .45rem;
+}
+
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -118,6 +156,12 @@ def init_state():
         "business_last_response": None,
         "evaluation_responses": [],
         "scale_evidence": [],
+        "source_registry": {},
+        "readiness_reports": {},
+        "auto_model_done": {},
+        "audit_events_session": [],
+        "auto_model_enabled": True,
+        "current_page": "Dashboard",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -138,6 +182,16 @@ def add_dataset(ds: LoadedDataset):
     cleaned, report = clean_dataframe(ds.dataframe)
     st.session_state.cleaned[name] = cleaned
     st.session_state.cleaning_reports[name] = report
+    st.session_state.source_registry[name] = {
+        "source_type": getattr(ds, "source_type", "unknown"),
+        "notes": getattr(ds, "notes", ""),
+        "original_name": getattr(ds, "name", name),
+    }
+    st.session_state.readiness_reports[name] = build_readiness_report(cleaned, dataset_name=name).to_dict()
+    try:
+        record_audit_event("dataset_loaded", dataset_name=name, status="PASS", details=st.session_state.source_registry[name])
+    except Exception:
+        pass
     if st.session_state.active_dataset is None:
         st.session_state.active_dataset = name
 
@@ -159,17 +213,63 @@ def sample_for_display(df: pd.DataFrame, max_rows: int = 30000) -> pd.DataFrame:
     return df.sample(max_rows, random_state=42)
 
 
+def readiness_dict_for(name: str, df: pd.DataFrame, target_column: str | None = None) -> dict:
+    report_dict = st.session_state.readiness_reports.get(name)
+    if not report_dict or target_column:
+        report_dict = build_readiness_report(df, dataset_name=name, target_column=target_column).to_dict()
+        if not target_column:
+            st.session_state.readiness_reports[name] = report_dict
+    return report_dict
+
+
+def render_readiness_summary(name: str, df: pd.DataFrame, target_column: str | None = None) -> None:
+    rep = readiness_dict_for(name, df, target_column=target_column)
+    status_html = status_badge_html(str(rep.get("overall_status", "WARNING")))
+    st.markdown(
+        f"<div class='card'><b>Dataset readiness:</b> {status_html} "
+        f"<span class='small-muted'>Quality score {float(rep.get('quality_score', 0)):.1f}/100 • "
+        f"{int(rep.get('rows', 0)):,} rows • {int(rep.get('columns', 0)):,} columns • "
+        f"{float(rep.get('memory_mb', 0)):.2f} MB</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def maybe_auto_train_classification(name: str, df: pd.DataFrame) -> None:
+    if not st.session_state.get("auto_model_enabled", True):
+        return
+    if name in st.session_state.model_outputs and st.session_state.model_outputs.get(name) is not None:
+        return
+    if st.session_state.auto_model_done.get(name):
+        return
+    targets = detect_binary_targets(df)
+    if not targets:
+        st.session_state.auto_model_done[name] = "no_binary_target"
+        return
+    target_col = targets[0]
+    positive = infer_positive_label(df[target_col])
+    # Avoid surprising long blocking runs for very large datasets. Manual mode can still train.
+    max_rows = min(max(len(df), 5000), 120000)
+    try:
+        with st.status("Automatic modelling started", expanded=False) as status:
+            st.write(f"Detected target `{target_col}` and positive class `{positive}`")
+            st.write("Training classification model set once and caching the result")
+            output = train_models(df, target_col, positive, include_xgboost=False, max_training_rows=max_rows)
+            st.session_state.model_outputs[name] = output
+            st.session_state.auto_model_done[name] = "trained"
+            st.session_state.readiness_reports[name] = build_readiness_report(df, dataset_name=name, target_column=target_col).to_dict()
+            try:
+                record_audit_event("auto_model_trained", dataset_name=name, status="PASS", details={"target": target_col, "best_model": output.best_result.model_name if output.best_result else None})
+            except Exception:
+                pass
+            status.update(label=f"Auto modelling complete: {output.best_result.model_name if output.best_result else 'no best model'}", state="complete")
+    except Exception as exc:
+        st.session_state.auto_model_done[name] = f"failed: {exc}"
+        st.warning(f"Automatic modelling could not run: {exc}. Use the manual model page to adjust settings.")
+
+
 init_state()
 
-st.markdown(
-    """
-<div class='hero'>
-  <h1>Visual Explainable AI Copilot for Business Decision Support</h1>
-  <p>Upload structured business data, create modern visual evidence, train controlled models, explain predictions, generate business recommendations and capture evaluation evidence.</p>
-</div>
-""",
-    unsafe_allow_html=True,
-)
+# Header is now compact and rendered contextually after data is loaded.
 
 with st.sidebar:
     st.header("Dataset Hub")
@@ -181,9 +281,13 @@ with st.sidebar:
     )
     if st.button("Load uploaded files", use_container_width=True):
         try:
-            loaded = load_uploaded_files(uploads)
-            for ds in loaded:
-                add_dataset(ds)
+            with st.status("Loading uploaded data...", expanded=True) as status:
+                st.write("Reading files and supported ZIP contents")
+                loaded = load_uploaded_files(uploads)
+                for ds in loaded:
+                    st.write(f"Processing `{ds.name}`")
+                    add_dataset(ds)
+                status.update(label="Uploaded data loaded", state="complete")
             st.success(f"Loaded {len(loaded)} dataset(s).")
         except Exception as exc:
             st.error(f"Upload failed: {exc}")
@@ -192,11 +296,68 @@ with st.sidebar:
     url = st.text_input("Public CSV/JSON/Excel/API URL")
     if st.button("Load URL/API data", use_container_width=True):
         try:
-            ds = load_public_url(url)
-            add_dataset(ds)
+            with st.status("Loading public URL/API data...", expanded=True) as status:
+                st.write("Reading source")
+                ds = load_public_url(url)
+                st.write("Cleaning and validating dataset")
+                add_dataset(ds)
+                status.update(label="URL/API data loaded", state="complete")
             st.success(f"Loaded `{ds.name}` from URL/API.")
         except Exception as exc:
             st.error(f"URL/API load failed: {exc}")
+
+    st.divider()
+    gdrive_url = st.text_input("Google Drive / Google Sheets shared link")
+    if st.button("Load Google Drive data", use_container_width=True):
+        try:
+            with st.status("Loading Google Drive data...", expanded=True) as status:
+                st.write("Converting shared link to a readable source")
+                ds = load_google_drive_url(gdrive_url)
+                st.write("Cleaning and validating dataset")
+                add_dataset(ds)
+                status.update(label="Google Drive data loaded", state="complete")
+            st.success(f"Loaded `{ds.name}` from Google Drive/Sheets.")
+        except Exception as exc:
+            st.error(f"Google Drive load failed: {exc}")
+            st.caption("Use a public/shared file link or Google Sheets link. Private Drive folders require OAuth and are documented as the cloud extension.")
+
+    with st.expander("Database connectors: PostgreSQL / MongoDB"):
+        st.caption("Optional live-data connectors. Keep credentials private; use environment variables in real deployment.")
+        db_kind = st.selectbox("Database source", ["PostgreSQL", "MongoDB"], key="db_kind")
+        if db_kind == "PostgreSQL":
+            pg_uri = st.text_input("PostgreSQL URI", type="password", placeholder="postgresql+psycopg2://user:password@host:5432/db")
+            pg_query = st.text_input("Table name or SELECT query", placeholder="public.customers or SELECT * FROM public.customers")
+            pg_limit = st.number_input("Maximum rows", min_value=1000, max_value=500000, value=100000, step=1000, key="pg_limit")
+            if st.button("Load PostgreSQL data", use_container_width=True):
+                try:
+                    with st.status("Connecting to PostgreSQL...", expanded=True) as status:
+                        ds = load_postgres_table(pg_uri, pg_query, limit=int(pg_limit))
+                        add_dataset(ds)
+                        status.update(label="PostgreSQL data loaded", state="complete")
+                    st.success("Loaded PostgreSQL dataset.")
+                except Exception as exc:
+                    st.error(f"PostgreSQL load failed: {exc}")
+        else:
+            mongo_uri = st.text_input("MongoDB URI", type="password", placeholder="mongodb://user:password@host:27017")
+            mongo_db = st.text_input("Database name")
+            mongo_collection = st.text_input("Collection name")
+            mongo_limit = st.number_input("Maximum documents", min_value=1000, max_value=500000, value=100000, step=1000, key="mongo_limit")
+            if st.button("Load MongoDB data", use_container_width=True):
+                try:
+                    with st.status("Connecting to MongoDB...", expanded=True) as status:
+                        ds = load_mongo_collection(mongo_uri, mongo_db, mongo_collection, limit=int(mongo_limit))
+                        add_dataset(ds)
+                        status.update(label="MongoDB data loaded", state="complete")
+                    st.success("Loaded MongoDB collection.")
+                except Exception as exc:
+                    st.error(f"MongoDB load failed: {exc}")
+
+    st.divider()
+    st.session_state.auto_model_enabled = st.checkbox(
+        "Auto-model once after data load",
+        value=st.session_state.get("auto_model_enabled", True),
+        help="If a binary target is detected, the app trains the first classification model set once and caches the result. Manual retraining is still available.",
+    )
 
     st.divider()
     if st.session_state.cleaned:
@@ -253,20 +414,132 @@ name = st.session_state.active_dataset
 df = active_df()
 assert df is not None
 report = st.session_state.cleaning_reports.get(name)
+maybe_auto_train_classification(name, df)
 model_output = st.session_state.model_outputs.get(name)
 regression_output = st.session_state.regression_outputs.get(name)
 explanation_output = st.session_state.explanations.get(name)
 
-st.subheader(f"Active dataset: `{name}`")
-metrics = overview_metrics(df)
-cols = st.columns(6)
-for col, (label, value) in zip(cols, metrics.items()):
-    with col:
-        render_metric_card(label, f"{value:,}" if isinstance(value, int) else value)
+PAGE_LABELS = [
+    "Dashboard",
+    "Cleaning & EDA",
+    "Modeling & Prediction Explanation",
+    "Business Improvements",
+    "Chat",
+    "Evaluation",
+    "Export Data",
+    "Visualization",
+    "Scale Readiness",
+]
+if st.session_state.current_page not in PAGE_LABELS:
+    st.session_state.current_page = "Dashboard"
 
-main_tabs = st.tabs(["📁 Data", "🧹 Cleaning", "📊 EDA", "🤖 Predictive Models", "🔎 Explain", "💡 Business Copilot", "💬 AI Copilot", "🧪 Evaluation", "🏗️ Scale Readiness", "📄 Export", "📈 Visual Analytics"])
+if st.session_state.current_page == "Dashboard":
+    st.markdown(
+        """
+<div class='compact-topbar'>
+  <h2>Dataset-Grounded AI Copilot</h2>
+  <p>Operational decision support from integrated data, readiness checks, explainable models, visuals, business recommendations and auditable Copilot answers.</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown(
+        f"<div class='page-topline'><b>{st.session_state.current_page}</b> "
+        f"<span class='small-muted'>• Active dataset: <code>{name}</code> • {len(df):,} rows • {df.shape[1]:,} columns</span></div>",
+        unsafe_allow_html=True,
+    )
 
-with main_tabs[0]:
+# Dashboard navigation buttons replace the crowded main tab bar.
+nav_specs = [
+    ("Dashboard", "🏠", "overview, readiness and quick graphs"),
+    ("Cleaning & EDA", "🧹", "cleaning report, missing values and exploration"),
+    ("Modeling & Prediction Explanation", "🤖", "auto/manual models, metrics and explainability"),
+    ("Business Improvements", "💡", "dataset-grounded recommendations"),
+    ("Chat", "💬", "fixed Copilot chat with evidence-backed answers"),
+    ("Evaluation", "🧪", "why it is used: prove prediction-only vs explanation-supported value"),
+    ("Export Data", "📄", "reports, cleaned data, chat and audit evidence"),
+    ("Visualization", "📈", "auto dashboard and manual visual builder"),
+]
+nav_cols = st.columns(4)
+for idx, (page_label, icon, desc) in enumerate(nav_specs):
+    with nav_cols[idx % 4]:
+        active = " ✅" if st.session_state.current_page == page_label else ""
+        st.markdown(f"<div class='nav-card'><div class='nav-title'>{icon} {page_label}{active}</div><div class='nav-text'>{desc}</div></div>", unsafe_allow_html=True)
+        if st.button(f"Open {page_label}", key=f"nav_{page_label}", use_container_width=True):
+            st.session_state.current_page = page_label
+            st.rerun()
+
+current_page = st.session_state.current_page
+
+if current_page == "Dashboard":
+    st.markdown("<div class='dashboard-section-title'>Dataset readiness and key details</div>", unsafe_allow_html=True)
+    render_readiness_summary(name, df, target_column=model_output.target_column if model_output else None)
+    metrics = overview_metrics(df)
+    cols = st.columns(6)
+    for col, (label, value) in zip(cols, metrics.items()):
+        with col:
+            render_metric_card(label, f"{value:,}" if isinstance(value, int) else value)
+
+    st.markdown("<div class='dashboard-section-title'>Quick model status</div>", unsafe_allow_html=True)
+    q1, q2, q3, q4 = st.columns(4)
+    auto_status = st.session_state.auto_model_done.get(name, "waiting")
+    q1.metric("Auto-model", str(auto_status))
+    if model_output and model_output.best_result:
+        q2.metric("Best model", model_output.best_result.model_name)
+        q3.metric("F1", f"{model_output.best_result.metrics.get('f1', 0):.3f}")
+        roc = model_output.best_result.metrics.get("roc_auc", np.nan)
+        q4.metric("ROC-AUC", f"{roc:.3f}" if not np.isnan(roc) else "n/a")
+    else:
+        q2.metric("Best model", "not trained")
+        q3.metric("F1", "n/a")
+        q4.metric("ROC-AUC", "n/a")
+
+    st.markdown("<div class='dashboard-section-title'>Automatic visual preview</div>", unsafe_allow_html=True)
+    try:
+        preview_target = model_output.target_column if model_output else (detect_binary_targets(df)[0] if detect_binary_targets(df) else None)
+        if preview_target:
+            dist = target_distribution(df, preview_target)
+            st.dataframe(dist, use_container_width=True, hide_index=True)
+            fig_preview = px.bar(dist, x=preview_target, y="count", title=f"Distribution of {preview_target}")
+            render_plotly_chart(fig_preview, key=f"dashboard_target_preview_{name}_{preview_target}")
+        else:
+            numeric_cols_preview = df.select_dtypes(include=np.number).columns.tolist()
+            if numeric_cols_preview:
+                fig_preview = figure_numeric_distribution(sample_for_display(df), numeric_cols_preview[0])
+                render_plotly_chart(fig_preview, key=f"dashboard_numeric_preview_{name}_{numeric_cols_preview[0]}")
+            else:
+                st.info("No target or numeric column detected for automatic graph preview.")
+    except Exception as exc:
+        st.info(f"Automatic preview chart could not be created safely: {exc}")
+
+
+if current_page == "Dashboard":
+    st.markdown("### Dashboard data details and integration readiness")
+    src_meta = st.session_state.source_registry.get(name, {})
+    source_cols = st.columns(4)
+    source_cols[0].metric("Source type", src_meta.get("source_type", "unknown"))
+    source_cols[1].metric("Rows", f"{len(df):,}")
+    source_cols[2].metric("Columns", f"{df.shape[1]:,}")
+    source_cols[3].metric("Domain", detect_business_domain(df))
+    if src_meta.get("notes"):
+        st.caption(src_meta.get("notes"))
+    st.markdown("#### Data integration pipeline")
+    pcols = st.columns(5)
+    pipe = [
+        ("1. Source", src_meta.get("source_type", "uploaded/local")),
+        ("2. Ingestion", "parsed to DataFrame"),
+        ("3. Cleaning", "standardised columns/types"),
+        ("4. Readiness", readiness_dict_for(name, df).get("overall_status", "WARNING")),
+        ("5. Evidence", "EDA/model/Copilot ready"),
+    ]
+    for pc, (title, desc) in zip(pcols, pipe):
+        pc.markdown(f"<div class='pipeline-step'><b>{title}</b><br><span class='small-muted'>{desc}</span></div>", unsafe_allow_html=True)
+    rep_dict = readiness_dict_for(name, df)
+    gates = pd.DataFrame(rep_dict.get("gates", []))
+    if not gates.empty:
+        st.markdown("#### PASS / WARNING / FAIL readiness gates")
+        st.dataframe(gates, use_container_width=True, hide_index=True)
     st.markdown("### Dataset preview")
     st.dataframe(df.head(200), use_container_width=True, height=350)
     roles = detect_column_roles(df)
@@ -278,7 +551,7 @@ with main_tabs[0]:
     with st.expander("Detected column roles"):
         st.json(roles)
 
-with main_tabs[1]:
+if current_page == "Cleaning & EDA":
     st.markdown("### Automatic cleaning report")
     if report:
         st.dataframe(report.to_dataframe(), use_container_width=True)
@@ -292,7 +565,7 @@ with main_tabs[1]:
     if fig:
         render_plotly_chart(fig, key=f"missing_chart_{name}")
 
-with main_tabs[2]:
+if current_page == "Cleaning & EDA":
     st.markdown("### Exploratory data analysis")
     eda_tabs = st.tabs(["Summary", "Numeric", "Categorical", "Dates/Text", "Target", "Correlation"])
     sample_df = sample_for_display(df)
@@ -367,12 +640,14 @@ with main_tabs[2]:
         else:
             st.info("Need at least two numeric columns for correlation heatmap.")
 
-with main_tabs[3]:
+if current_page == "Modeling & Prediction Explanation":
     st.markdown("### Predictive model centre")
     st.caption(
         "Classification is the main evaluated workflow for customer churn. "
         "Regression is included as an optional robustness mode for numeric business outcomes such as sales, revenue or profit."
     )
+    auto_status = st.session_state.auto_model_done.get(name, "waiting")
+    st.markdown(f"<div class='card'><b>Auto-modelling status:</b> <span class='small-muted'>{auto_status}</span><br><span class='small-muted'>The app trains once after data load when a binary target is detected. Manual retraining remains available below.</span></div>", unsafe_allow_html=True)
     model_tabs = st.tabs(["Classification: Yes/No targets", "Regression: numeric targets", "Model evidence and guidance"])
 
     with model_tabs[0]:
@@ -387,7 +662,7 @@ with main_tabs[3]:
                 default_pos = infer_positive_label(df[target_col]) if target_col in df.columns and df[target_col].nunique(dropna=True) == 2 else (possible_values[0] if possible_values else None)
                 positive_value = st.selectbox("Positive class", possible_values, index=possible_values.index(default_pos) if default_pos in possible_values else 0, key="model_pos") if possible_values else None
             inc_xgb = st.checkbox("Try optional XGBoost if installed", value=XGBOOST_AVAILABLE, help="The app continues normally if XGBoost is not installed or fails.", key="cls_xgb")
-            max_rows = st.slider("Maximum rows for classification training", min_value=5000, max_value=200000, value=min(max(len(df), 5000), 120000), step=5000, help="Large datasets may be sampled for model training to keep Streamlit responsive.", key="cls_rows")
+            max_rows = st.slider("Maximum rows for classification training", min_value=5000, max_value=200000, value=min(max(len(df), 5000), 120000), step=5000, help="Large datasets may be sampled for model training to keep the interface responsive.", key="cls_rows")
             if st.button("Train and compare classification models", type="primary", use_container_width=True):
                 try:
                     with st.spinner("Training classification models and selecting the best model..."):
@@ -485,7 +760,7 @@ with main_tabs[3]:
         st.warning("The system supports multiple dataset types, but customer churn remains the primary evaluated case study. Other modes strengthen robustness and discussion, not scope creep.")
 
 
-with main_tabs[4]:
+if current_page == "Modeling & Prediction Explanation":
     st.markdown("### Prediction explanation")
     if not (model_output and model_output.best_result):
         st.info("Train a model first to generate prediction explanations.")
@@ -527,7 +802,7 @@ with main_tabs[4]:
                 st.write("• " + sent)
             st.info("Safety warning: outputs support, not replace, human judgement.")
 
-with main_tabs[5]:
+if current_page == "Business Improvements":
     st.markdown("### Business Insight Engine")
     st.caption("Domain-aware business suggestions generated only from the active uploaded dataset. Use this page for sales, employee/HR, customer feedback, marketing, and operations improvement ideas.")
     domain = detect_business_domain(df)
@@ -572,9 +847,9 @@ with main_tabs[5]:
         st.info("Click a business question above. The answer will appear here and also be saved in the AI Copilot chat history as evaluation evidence.")
     st.warning("Safety guard: the system must not make final business, financial or HR decisions automatically. It provides data-grounded suggestions for human review.")
 
-with main_tabs[6]:
-    st.markdown("### Controlled data-grounded Copilot")
-    st.caption("Answers are restricted to the active uploaded dataset, trained model and explanation artefacts. Short follow-up questions can reuse the previous topic/column from this dataset.")
+if current_page == "Chat":
+    st.markdown("### Dataset Copilot Chat")
+    st.markdown("<div class='chat-fixed-note'>Answers use only the active dataset, model metrics and explanation artefacts. The chat input stays fixed at the bottom of the page and new answers appear latest-first.</div>", unsafe_allow_html=True)
 
     tool_cols = st.columns([1, 1, 2, 2])
     latest_first = tool_cols[0].toggle("Latest first", value=True, help="Shows the newest answer at the top so you do not need to scroll down after every question.")
@@ -647,6 +922,23 @@ with main_tabs[6]:
         if response.context:
             st.session_state.chat_contexts[name] = response.context
         st.session_state.chat_history.append({"dataset": name, "question": question, "response": response})
+        st.session_state.audit_events_session.append({
+            "dataset": name,
+            "event": "copilot_answer",
+            "question": question,
+            "context": response.context,
+            "evidence_rows": len(response.table) if response.table is not None else 0,
+        })
+        try:
+            record_audit_event(
+                "copilot_answer",
+                dataset_name=name,
+                status=readiness_dict_for(name, df).get("overall_status", "WARNING"),
+                question=question,
+                details={"context": response.context, "evidence_rows": len(response.table) if response.table is not None else 0},
+            )
+        except Exception:
+            pass
 
     # Keep chat scoped to the active dataset so answers from another uploaded file do not mix in.
     if st.session_state.chat_history and isinstance(st.session_state.chat_history[0], dict):
@@ -676,8 +968,9 @@ with main_tabs[6]:
                 render_plotly_chart(response.chart, key=f"chat_chart_{name}_{hist_idx}_{display_idx}")
             st.warning(response.safety_warning)
 
-with main_tabs[7]:
-    st.markdown("### Evaluation workspace")
+if current_page == "Evaluation":
+    st.markdown("### Evaluation workspace — why this page is used")
+    st.info("Evaluation is used to prove that the Copilot works as a dissertation artefact. It compares Condition A: prediction-only against Condition B: prediction + explanation + recommendation + safety warning. This gives evidence for understanding, trust, usefulness and decision confidence.")
     st.caption("Use this page to collect evidence for the dissertation evaluation: prediction-only output versus explanation-supported Copilot output.")
     eval_tabs = st.tabs(["Participant task", "Questionnaire", "Collected responses"])
 
@@ -749,7 +1042,7 @@ with main_tabs[7]:
                 "safety_awareness": safety_awareness,
                 "comments": comments,
             })
-            st.success("Evaluation response saved in this Streamlit session. Download responses from the next tab before closing the app.")
+            st.success("Evaluation response saved in this session. Download responses from the next tab before closing the app.")
 
     with eval_tabs[2]:
         responses = pd.DataFrame(st.session_state.evaluation_responses)
@@ -766,7 +1059,7 @@ with main_tabs[7]:
             st.download_button("Download evaluation responses CSV", responses.to_csv(index=False), file_name="evaluation_responses.csv", mime="text/csv", use_container_width=True)
 
 
-with main_tabs[8]:
+if current_page == "Scale Readiness":
     st.markdown("### Small-scale and large-scale readiness")
     st.caption("Use this tab to show that the prototype works for the main small-scale dissertation case study and has a clear pathway for larger structured datasets.")
 
@@ -776,7 +1069,7 @@ with main_tabs[8]:
     memory_mb = float(prof.get("memory_mb", 0) or 0)
     if rows < 100_000:
         scale_label = "Small / medium proof-of-concept dataset"
-        scale_msg = "Suitable for full Streamlit workflow: cleaning, EDA, model training, explanation, Copilot and evaluation."
+        scale_msg = "Suitable for the full local workflow: cleaning, EDA, model training, explanation, Copilot and evaluation."
     elif rows < 1_000_000:
         scale_label = "Large dataset"
         scale_msg = "Suitable for cleaning, aggregated EDA and business insight; model training should use sampling or backend services."
@@ -844,22 +1137,61 @@ Frontend UI
   -> Audit log, RBAC, monitoring and human approval workflow
 """, language="text")
 
-with main_tabs[9]:
-    st.markdown("### Export evidence")
+if current_page == "Export Data":
+    st.markdown("### Export data, reports, chat answers and audit evidence")
     markdown = make_markdown_report(name, df, report, model_output, st.session_state.explanations.get(name))
     st.download_button("Download Markdown report", markdown, file_name=f"{name}_copilot_report.md", mime="text/markdown", use_container_width=True)
     st.download_button("Download cleaned active dataset CSV", df.to_csv(index=False), file_name=f"{name}_cleaned.csv", mime="text/csv", use_container_width=True)
     if report:
         st.download_button("Download cleaning report CSV", report.to_dataframe().to_csv(index=False), file_name=f"{name}_cleaning_report.csv", mime="text/csv", use_container_width=True)
+    readiness_export = pd.DataFrame(readiness_dict_for(name, df).get("gates", []))
+    if not readiness_export.empty:
+        st.download_button("Download readiness gates CSV", readiness_export.to_csv(index=False), file_name=f"{name}_readiness_gates.csv", mime="text/csv", use_container_width=True)
+    audit_session = pd.DataFrame(st.session_state.audit_events_session)
+    if not audit_session.empty:
+        st.download_button("Download session audit log CSV", audit_session.to_csv(index=False), file_name=f"{name}_session_audit_log.csv", mime="text/csv", use_container_width=True)
+    # Export Copilot chat history with outputs for dissertation evidence.
+    active_chat_rows = []
+    if st.session_state.chat_history and isinstance(st.session_state.chat_history[0], dict):
+        for item in st.session_state.chat_history:
+            if item.get("dataset") == name:
+                resp = item.get("response")
+                active_chat_rows.append({
+                    "dataset": name,
+                    "question": item.get("question", ""),
+                    "answer": getattr(resp, "answer", ""),
+                    "safety_warning": getattr(resp, "safety_warning", ""),
+                    "interpreted_question": getattr(resp, "interpreted_question", ""),
+                    "evidence_rows": len(getattr(resp, "table", pd.DataFrame())) if getattr(resp, "table", None) is not None else 0,
+                })
+    chat_export_df = pd.DataFrame(active_chat_rows)
+    if not chat_export_df.empty:
+        st.download_button("Download Copilot chat answers CSV", chat_export_df.to_csv(index=False), file_name=f"{name}_copilot_chat_answers.csv", mime="text/csv", use_container_width=True)
+        chat_md = "\n\n".join([
+            f"## Question\n{row['question']}\n\n## Answer\n{row['answer']}\n\n## Safety warning\n{row['safety_warning']}"
+            for _, row in chat_export_df.iterrows()
+        ])
+        st.download_button("Download Copilot chat answers Markdown", chat_md, file_name=f"{name}_copilot_chat_answers.md", mime="text/markdown", use_container_width=True)
+    else:
+        st.info("No Copilot chat answers are available yet for export. Ask questions in the Chat page first.")
+
+    try:
+        sqlite_audit = read_audit_events()
+        if not sqlite_audit.empty:
+            st.download_button("Download SQLite audit events CSV", sqlite_audit.to_csv(index=False), file_name="sqlite_audit_events.csv", mime="text/csv", use_container_width=True)
+    except Exception:
+        pass
 
 
 
-with main_tabs[10]:
-    st.markdown("### Visual Analytics Copilot Dashboard")
+if current_page == "Visualization":
+    st.markdown("### Visualisation: automatic dashboard and manual visual builder")
     st.caption(
-        "This dashboard gives the prototype a BI-style evidence layer. "
-        "Charts are generated from the active uploaded dataset and are linked to business interpretation, not decorative visuals."
+        "Use Auto view for generated visuals or scroll to Manual builder to create a graph using selected columns."
     )
+    view_mode = st.radio("Visual mode", ["Auto dashboard", "Manual visual builder"], horizontal=True, key=f"visual_mode_{name}")
+    if view_mode == "Manual visual builder":
+        st.info("Manual graph controls are shown below under Custom visual builder. Auto charts remain available by switching back to Auto dashboard.")
 
     binary_targets_visual = detect_binary_targets(df)
     visual_target = None
@@ -916,7 +1248,7 @@ with main_tabs[10]:
     st.markdown("#### Custom visual builder")
     st.caption(
         "Use this field-picker to create your own business chart from two or more columns. "
-        "This is more reliable than drag-and-drop in Streamlit and is easier to evaluate for the dissertation."
+        "This is more reliable than drag-and-drop alone and is easier to evaluate for the dissertation."
     )
     all_columns = list(df.columns)
     numeric_columns = df.select_dtypes(include=np.number).columns.tolist()
@@ -1062,7 +1394,7 @@ with main_tabs[10]:
         },
         {
             "Improvement": "Small and large scale readiness",
-            "Why it matters": "Large datasets cannot be visualised row-by-row inside a local Streamlit app.",
+            "Why it matters": "Large datasets cannot be visualised row-by-row inside a local web prototype.",
             "How implemented": "Aggregation, top-N ranking, sampling for scatter/distribution charts and explicit large-data notes.",
         },
     ])

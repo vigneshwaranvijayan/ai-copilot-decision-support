@@ -1,0 +1,14 @@
+Dataset-Grounded AI Copilot v13.1 feedback evidence fix
+Date: 2026-07-20
+
+Validation:
+- python -m py_compile app.py src/*.py -> passed
+- python -m pytest -q -> 25 passed
+
+Fixes:
+- Improved customer feedback Copilot answers for negative feedback and improvement questions.
+- Negative evidence now uses stricter concern evidence rather than counting broad words such as service/internet as negative.
+- Standalone "not" is no longer treated as negative unless it negates a positive term, such as "not satisfied".
+- Feedback answer now includes top improvement priorities directly in the visible Copilot response.
+- Added negative_evidence_terms column for clearer evidence trace.
+- Removed visible Streamlit wording from user-facing help text where possible.
