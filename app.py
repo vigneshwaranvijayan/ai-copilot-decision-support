@@ -19,7 +19,6 @@ from src.data_loader import (
     load_public_url,
     load_google_drive_url,
     load_postgres_table,
-    load_mongo_collection,
     load_uploaded_files,
     merge_datasets,
 )
@@ -52,6 +51,12 @@ from src.report import make_markdown_report
 from src.visual_analytics import build_visual_dashboard
 from src.validation import build_readiness_report, status_badge_html
 from src.persistence import record_audit_event, read_audit_events
+from src.research_contribution import contribution_summary, contribution_table
+from src.readiness_gates import readiness_criteria_table
+from src.evaluation_framework import evaluation_metrics_table
+from src.evidence_package import build_evidence_package, evidence_package_to_text
+from src.memory_manager import update_short_term_memory, short_term_memory_table, memory_architecture_table
+from src.vector_memory import add_memory_document, query_memory, memory_backend_status
 
 st.set_page_config(
     page_title="Dataset-Grounded AI Copilot",
@@ -137,9 +142,199 @@ div[data-testid="stChatMessage"] {
   background: #ffffff; box-shadow: 0 8px 20px rgba(15,23,42,.04); margin-bottom: .45rem;
 }
 
+
+.ai-topbar {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:.85rem 1.1rem; border-radius:1rem;
+  background: linear-gradient(135deg,#0f172a 0%,#1d4ed8 55%,#0891b2 100%);
+  color:white; box-shadow:0 12px 30px rgba(15,23,42,.16); margin-bottom:.55rem;
+}
+.ai-brand { font-size:1.18rem; font-weight:900; letter-spacing:.02em; }
+.ai-subtitle { font-size:.82rem; opacity:.9; margin-top:.12rem; }
+.ai-user { font-size:.86rem; opacity:.95; background:rgba(255,255,255,.14); padding:.35rem .65rem; border-radius:999px; }
+.side-brand-title { font-size:1.18rem; font-weight:900; color:#0f172a; margin:.15rem 0 .2rem 0; }
+.side-nav {
+  padding:.55rem .65rem; border:1px solid rgba(15,23,42,.10);
+  border-radius:.8rem; margin:.28rem 0 .18rem 0;
+  background:linear-gradient(180deg,#ffffff,#f8fafc);
+  box-shadow:0 4px 12px rgba(15,23,42,.04);
+}
+.side-nav.active { border-color:#2563eb; background:linear-gradient(180deg,#eff6ff,#ffffff); }
+.side-nav span { font-size:.74rem; color:#64748b; }
+.upload-hero {
+  padding:1.15rem 1.25rem; border-radius:1.1rem;
+  background:linear-gradient(135deg,#eff6ff,#ffffff);
+  border:1px solid rgba(37,99,235,.18); margin-bottom:.8rem;
+}
+.upload-hero h2 { margin:0; color:#0f172a; font-size:1.45rem; }
+.upload-hero p { margin:.25rem 0 0 0; color:#475569; }
+.model-use-card { padding:.9rem; border-radius:.9rem; background:#f8fafc; border:1px solid rgba(15,23,42,.10); }
+
+
+.reviewer-mode-box {
+  padding:.95rem; border-radius:1rem; border:1px solid rgba(37,99,235,.18);
+  background:linear-gradient(135deg,#eff6ff,#ffffff); margin:.7rem 0;
+}
+.reviewer-mode-box h4 { margin:.1rem 0 .25rem 0; color:#0f172a; }
+.review-tip { font-size:.84rem; color:#475569; }
+.compact-answer {
+  padding:.75rem .9rem; border-radius:.9rem; background:#ffffff;
+  border:1px solid rgba(15,23,42,.08); box-shadow:0 4px 14px rgba(15,23,42,.04);
+}
+
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+
+
+
+def render_ai_topbar(active_name: str | None = None, df: pd.DataFrame | None = None) -> None:
+    """Compact top navbar: requested AI Solution branding, dummy account, theme and export."""
+    if "ui_dark_mode" not in st.session_state:
+        st.session_state.ui_dark_mode = False
+
+    if st.session_state.ui_dark_mode:
+        st.markdown(
+            """
+<style>
+.stApp { background:#0b1220; color:#e5e7eb; }
+.card, .nav-card, .page-topline, div[data-testid="stChatMessage"], .model-use-card { background:#111827 !important; color:#e5e7eb !important; border-color:rgba(148,163,184,.25) !important; }
+.metric-value, .dashboard-section-title, .nav-card .nav-title, .side-brand-title { color:#f8fafc !important; }
+.small-muted, .nav-card .nav-text, .side-nav span { color:#cbd5e1 !important; }
+.side-nav { background:#111827 !important; }
+.side-nav.active { background:#1e293b !important; }
+</style>
+""",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        """
+<div class="ai-topbar">
+  <div>
+    <div class="ai-brand">AI Solution</div>
+    <div class="ai-subtitle">Dataset-grounded explainable Copilot for operational decision support</div>
+  </div>
+  <div class="ai-user">Account: Research User</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    top_left, top_theme, top_export = st.columns([7, 1.3, 1.5])
+    with top_left:
+        if active_name and df is not None:
+            st.caption(f"Active dataset: `{active_name}` • {len(df):,} rows • {df.shape[1]:,} columns")
+        else:
+            st.caption("Upload a dataset or connect a data source to begin.")
+    with top_theme:
+        st.session_state.ui_dark_mode = st.toggle("Dark", value=st.session_state.get("ui_dark_mode", False), key="global_dark_toggle")
+    with top_export:
+        if active_name and df is not None:
+            st.download_button(
+                "Export",
+                f"# Quick export\nDataset: {active_name}\nRows: {len(df)}\nColumns: {df.shape[1]}\n",
+                file_name=f"{active_name}_quick_export.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+        else:
+            st.button("Export", disabled=True, use_container_width=True)
+
+
+def render_upload_page() -> None:
+    """Main upload/connect page so upload is not hidden only inside the sidebar."""
+    st.markdown(
+        """
+<div class="upload-hero">
+  <h2>Upload or connect data</h2>
+  <p>Choose local files, public URL/API, Google Drive, or PostgreSQL. After loading, the app cleans the data, runs readiness checks, stores evidence and auto-trains once when a valid target is detected.</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    up_tab, url_tab, drive_tab, pg_tab = st.tabs(["Local files", "URL / API", "Google Drive", "PostgreSQL"])
+    with up_tab:
+        st.markdown("#### Local upload")
+        uploads_main = st.file_uploader(
+            "Upload CSV, TSV, Excel, JSON or ZIP",
+            type=["csv", "tsv", "txt", "xlsx", "xls", "json", "zip"],
+            accept_multiple_files=True,
+            key="upload_page_files",
+        )
+        if st.button("Load local files", key="upload_page_load", use_container_width=True):
+            try:
+                with st.status("Loading uploaded data...", expanded=True) as status:
+                    loaded = load_uploaded_files(uploads_main)
+                    for ds in loaded:
+                        st.write(f"Processing `{ds.name}`")
+                        add_dataset(ds)
+                    status.update(label="Data loaded", state="complete")
+                st.success(f"Loaded {len(loaded)} dataset(s).")
+                st.session_state.current_page = "Dashboard"
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Upload failed: {exc}")
+    with url_tab:
+        st.markdown("#### Public URL / API")
+        url_main = st.text_input("Public CSV / JSON / Excel / API URL", key="upload_page_url")
+        if st.button("Load URL/API", key="upload_page_load_url", use_container_width=True):
+            try:
+                with st.status("Loading URL/API data...", expanded=True) as status:
+                    ds = load_public_url(url_main)
+                    add_dataset(ds)
+                    status.update(label="URL/API data loaded", state="complete")
+                st.success(f"Loaded `{ds.name}`.")
+                st.session_state.current_page = "Dashboard"
+                st.rerun()
+            except Exception as exc:
+                st.error(f"URL/API load failed: {exc}")
+    with drive_tab:
+        st.markdown("#### Google Drive / Google Sheets")
+        st.caption("Use a public/shared Drive file or Google Sheets link. Private Drive folder OAuth is documented as a cloud extension.")
+        gd_main = st.text_input("Shared Google Drive / Google Sheets link", key="upload_page_gdrive")
+        if st.button("Load Google Drive", key="upload_page_load_gdrive", use_container_width=True):
+            try:
+                with st.status("Loading Google Drive data...", expanded=True) as status:
+                    ds = load_google_drive_url(gd_main)
+                    add_dataset(ds)
+                    status.update(label="Google Drive data loaded", state="complete")
+                st.success(f"Loaded `{ds.name}`.")
+                st.session_state.current_page = "Dashboard"
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Google Drive load failed: {exc}")
+    with pg_tab:
+        st.markdown("#### PostgreSQL structured data")
+        st.caption("PostgreSQL is for structured/live business tables. Keep credentials in environment variables or secrets; do not commit them.")
+        pg_uri_main = st.text_input("PostgreSQL URI", type="password", key="upload_page_pg_uri", placeholder="postgresql+psycopg2://user:password@host:5432/db")
+        pg_query_main = st.text_input("Table name or SELECT query", key="upload_page_pg_query", placeholder="public.customers or SELECT * FROM public.customers")
+        pg_limit_main = st.number_input("Maximum rows", min_value=1000, max_value=500000, value=100000, step=1000, key="upload_page_pg_limit")
+        if st.button("Load PostgreSQL", key="upload_page_load_pg", use_container_width=True):
+            try:
+                with st.status("Connecting to PostgreSQL...", expanded=True) as status:
+                    ds = load_postgres_table(pg_uri_main, pg_query_main, limit=int(pg_limit_main))
+                    add_dataset(ds)
+                    status.update(label="PostgreSQL data loaded", state="complete")
+                st.success(f"Loaded `{ds.name}`.")
+                st.session_state.current_page = "Dashboard"
+                st.rerun()
+            except Exception as exc:
+                st.error(f"PostgreSQL load failed: {exc}")
+
+    if st.session_state.cleaned:
+        st.markdown("### Loaded datasets")
+        rows = []
+        for ds_name, ds_df in st.session_state.cleaned.items():
+            meta = st.session_state.source_registry.get(ds_name, {})
+            rows.append({
+                "dataset": ds_name,
+                "source": meta.get("source_type", "unknown"),
+                "rows": len(ds_df),
+                "columns": ds_df.shape[1],
+                "readiness": st.session_state.readiness_reports.get(ds_name, {}).get("overall_status", "WARNING"),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
 def init_state():
@@ -160,8 +355,11 @@ def init_state():
         "readiness_reports": {},
         "auto_model_done": {},
         "audit_events_session": [],
+        "session_memory": {},
+        "semantic_memory_events": [],
+        "semantic_memory_enabled": True,
         "auto_model_enabled": True,
-        "current_page": "Dashboard",
+        "current_page": "Upload Data",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -192,6 +390,22 @@ def add_dataset(ds: LoadedDataset):
         record_audit_event("dataset_loaded", dataset_name=name, status="PASS", details=st.session_state.source_registry[name])
     except Exception:
         pass
+    # Long-term semantic memory: store dataset summary/readiness evidence.
+    try:
+        if st.session_state.get("semantic_memory_enabled", True):
+            package = build_evidence_package(
+                dataset_name=name,
+                df=cleaned,
+                question="dataset loaded",
+                readiness=st.session_state.readiness_reports[name],
+            )
+            mem_id = add_memory_document(
+                evidence_package_to_text(package),
+                metadata={"dataset": name, "type": "dataset_summary", "source_type": getattr(ds, "source_type", "unknown")},
+            )
+            st.session_state.semantic_memory_events.append({"dataset": name, "type": "dataset_summary", "memory_id": mem_id})
+    except Exception:
+        pass
     if st.session_state.active_dataset is None:
         st.session_state.active_dataset = name
 
@@ -206,6 +420,39 @@ def active_df() -> pd.DataFrame | None:
 def render_metric_card(label: str, value: object):
     st.markdown(f"<div class='card'><div class='metric-label'>{label}</div><div class='metric-value'>{value}</div></div>", unsafe_allow_html=True)
 
+
+
+
+def compact_copilot_answer(full_answer: str) -> str:
+    """Return a screenshot-friendly answer while preserving core evidence fields."""
+    if not full_answer:
+        return ""
+    important_prefixes = [
+        "**Question understood as:**",
+        "**Dataset used:**",
+        "**Data readiness:**",
+        "**Answer grounding:**",
+        "**Confidence:**",
+        "**Columns/artefacts used:**",
+        "**Model / prediction evidence:**",
+        "**Evidence from the integrated data:**",
+        "**Business / decision-support use:**",
+        "**Limitations:**",
+        "**Evidence format:**",
+    ]
+    lines = [ln.strip() for ln in full_answer.splitlines() if ln.strip()]
+    picked = []
+    for ln in lines:
+        if ln.startswith("### Copilot answer"):
+            picked.append(ln)
+        elif any(ln.startswith(prefix) for prefix in important_prefixes):
+            # Keep long evidence/model lines readable in screenshots.
+            if len(ln) > 650:
+                ln = ln[:650].rstrip() + "..."
+            picked.append(ln)
+    if not picked:
+        return full_answer[:1200] + ("..." if len(full_answer) > 1200 else "")
+    return "\n\n".join(picked)
 
 def sample_for_display(df: pd.DataFrame, max_rows: int = 30000) -> pd.DataFrame:
     if len(df) <= max_rows:
@@ -255,13 +502,22 @@ def maybe_auto_train_classification(name: str, df: pd.DataFrame) -> None:
             st.write("Training classification model set once and caching the result")
             output = train_models(df, target_col, positive, include_xgboost=False, max_training_rows=max_rows)
             st.session_state.model_outputs[name] = output
-            st.session_state.auto_model_done[name] = "trained"
+            # v15.4: automatically generate SHAP/fallback explanation once after training.
+            # This makes reviewer questions such as "top model drivers" work without a manual extra step.
+            try:
+                if output.best_result is not None:
+                    auto_row = output.best_result.X_test.head(1) if len(output.best_result.X_test) else df[output.best_result.feature_columns].head(1)
+                    st.session_state.explanations[name] = explain_model(output.best_result, auto_row)
+                    st.write(f"Auto explanation ready: {st.session_state.explanations[name].method}")
+            except Exception as explain_exc:
+                st.write(f"Auto explanation could not be generated yet: {explain_exc}")
+            st.session_state.auto_model_done[name] = "trained + explained" if name in st.session_state.explanations else "trained"
             st.session_state.readiness_reports[name] = build_readiness_report(df, dataset_name=name, target_column=target_col).to_dict()
             try:
                 record_audit_event("auto_model_trained", dataset_name=name, status="PASS", details={"target": target_col, "best_model": output.best_result.model_name if output.best_result else None})
             except Exception:
                 pass
-            status.update(label=f"Auto modelling complete: {output.best_result.model_name if output.best_result else 'no best model'}", state="complete")
+            status.update(label=f"Auto modelling/explanation complete: {output.best_result.model_name if output.best_result else 'no best model'}", state="complete")
     except Exception as exc:
         st.session_state.auto_model_done[name] = f"failed: {exc}"
         st.warning(f"Automatic modelling could not run: {exc}. Use the manual model page to adjust settings.")
@@ -272,6 +528,29 @@ init_state()
 # Header is now compact and rendered contextually after data is loaded.
 
 with st.sidebar:
+    st.markdown("<div class='side-brand-title'>AI Solution</div>", unsafe_allow_html=True)
+    st.caption("Navigation")
+    sidebar_nav = [
+        ("Upload Data", "⬆️ Upload", "connect/load data"),
+        ("Dashboard", "🏠 Dashboard", "overview and readiness"),
+        ("Cleaning & EDA", "🧹 Cleaning & EDA", "quality and exploration"),
+        ("Modeling & Prediction Explanation", "🤖 Model", "prediction and explainability"),
+        ("Visualization", "📈 Graphs", "auto/manual visuals"),
+        ("Business Improvements", "💡 Business", "recommendations"),
+        ("Chat", "💬 Chat", "Copilot Q&A"),
+        ("Evaluation", "🧪 Evaluation", "proof and user study"),
+        ("Export Data", "📄 Export", "reports and evidence"),
+        ("Research & Memory", "🧠 Research", "contribution and memory"),
+    ]
+    for page_value, label, desc in sidebar_nav:
+        active = " active" if st.session_state.get("current_page") == page_value else ""
+        st.markdown(f"<div class='side-nav{active}'><b>{label}</b><br><span>{desc}</span></div>", unsafe_allow_html=True)
+        if st.button(label, key=f"sidebar_nav_{page_value}", use_container_width=True):
+            st.session_state.current_page = page_value
+            st.rerun()
+    st.divider()
+    st.caption("Data source controls")
+
     st.header("Dataset Hub")
     uploads = st.file_uploader(
         "Upload CSV, TSV, Excel, JSON or ZIP",
@@ -321,10 +600,10 @@ with st.sidebar:
             st.error(f"Google Drive load failed: {exc}")
             st.caption("Use a public/shared file link or Google Sheets link. Private Drive folders require OAuth and are documented as the cloud extension.")
 
-    with st.expander("Database connectors: PostgreSQL / MongoDB"):
-        st.caption("Optional live-data connectors. Keep credentials private; use environment variables in real deployment.")
-        db_kind = st.selectbox("Database source", ["PostgreSQL", "MongoDB"], key="db_kind")
-        if db_kind == "PostgreSQL":
+    with st.expander("Storage connectors: PostgreSQL + ChromaDB memory"):
+        st.caption("PostgreSQL loads structured live data. ChromaDB is used as semantic long-term memory for evidence retrieval, not as a raw business database.")
+        store_tab, memory_tab = st.tabs(["PostgreSQL structured data", "ChromaDB semantic memory"])
+        with store_tab:
             pg_uri = st.text_input("PostgreSQL URI", type="password", placeholder="postgresql+psycopg2://user:password@host:5432/db")
             pg_query = st.text_input("Table name or SELECT query", placeholder="public.customers or SELECT * FROM public.customers")
             pg_limit = st.number_input("Maximum rows", min_value=1000, max_value=500000, value=100000, step=1000, key="pg_limit")
@@ -337,20 +616,20 @@ with st.sidebar:
                     st.success("Loaded PostgreSQL dataset.")
                 except Exception as exc:
                     st.error(f"PostgreSQL load failed: {exc}")
-        else:
-            mongo_uri = st.text_input("MongoDB URI", type="password", placeholder="mongodb://user:password@host:27017")
-            mongo_db = st.text_input("Database name")
-            mongo_collection = st.text_input("Collection name")
-            mongo_limit = st.number_input("Maximum documents", min_value=1000, max_value=500000, value=100000, step=1000, key="mongo_limit")
-            if st.button("Load MongoDB data", use_container_width=True):
-                try:
-                    with st.status("Connecting to MongoDB...", expanded=True) as status:
-                        ds = load_mongo_collection(mongo_uri, mongo_db, mongo_collection, limit=int(mongo_limit))
-                        add_dataset(ds)
-                        status.update(label="MongoDB data loaded", state="complete")
-                    st.success("Loaded MongoDB collection.")
-                except Exception as exc:
-                    st.error(f"MongoDB load failed: {exc}")
+        with memory_tab:
+            st.session_state.semantic_memory_enabled = st.checkbox(
+                "Enable semantic memory logging",
+                value=st.session_state.get("semantic_memory_enabled", True),
+                help="Stores dataset summaries, readiness reports and Copilot answers in ChromaDB when available. If ChromaDB is not installed, a JSONL fallback is used.",
+            )
+            st.json(memory_backend_status())
+            memory_query = st.text_input("Search semantic memory", placeholder="e.g. churn model evidence, feedback improvement, readiness fail")
+            if st.button("Search memory", use_container_width=True):
+                results = query_memory(memory_query or "dataset evidence", dataset_name=st.session_state.active_dataset, n_results=5)
+                if results:
+                    st.dataframe(pd.DataFrame(results), use_container_width=True)
+                else:
+                    st.info("No semantic memory records found yet for this dataset.")
 
     st.divider()
     st.session_state.auto_model_enabled = st.checkbox(
@@ -401,13 +680,9 @@ with st.sidebar:
     st.caption("Scope guard: customer churn remains the main evaluation; extra datasets provide robustness, gap and scalability evidence.")
 
 if not st.session_state.cleaned:
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown("""<div class='card'><b>1. Upload data</b><br><span class='small-muted'>CSV, Excel, JSON, ZIP or public URL/API.</span></div>""", unsafe_allow_html=True)
-    with c2:
-        st.markdown("""<div class='card'><b>2. Analyse and train</b><br><span class='small-muted'>Automatic cleaning, EDA and model comparison if a binary target exists.</span></div>""", unsafe_allow_html=True)
-    with c3:
-        st.markdown("""<div class='card'><b>3. Ask Copilot</b><br><span class='small-muted'>Answers are restricted to the active uploaded dataset.</span></div>""", unsafe_allow_html=True)
+    st.session_state.current_page = "Upload Data"
+    render_ai_topbar()
+    render_upload_page()
     st.stop()
 
 name = st.session_state.active_dataset
@@ -420,57 +695,35 @@ regression_output = st.session_state.regression_outputs.get(name)
 explanation_output = st.session_state.explanations.get(name)
 
 PAGE_LABELS = [
+    "Upload Data",
     "Dashboard",
     "Cleaning & EDA",
     "Modeling & Prediction Explanation",
+    "Visualization",
     "Business Improvements",
     "Chat",
     "Evaluation",
     "Export Data",
-    "Visualization",
-    "Scale Readiness",
+    "Research & Memory",
 ]
 if st.session_state.current_page not in PAGE_LABELS:
     st.session_state.current_page = "Dashboard"
 
-if st.session_state.current_page == "Dashboard":
+if st.session_state.current_page == "Upload Data":
+    render_ai_topbar(name, df)
+    render_upload_page()
+    st.stop()
+
+current_page = st.session_state.current_page
+render_ai_topbar(name, df)
+
+if current_page != "Dashboard":
     st.markdown(
-        """
-<div class='compact-topbar'>
-  <h2>Dataset-Grounded AI Copilot</h2>
-  <p>Operational decision support from integrated data, readiness checks, explainable models, visuals, business recommendations and auditable Copilot answers.</p>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-else:
-    st.markdown(
-        f"<div class='page-topline'><b>{st.session_state.current_page}</b> "
+        f"<div class='page-topline'><b>{current_page}</b> "
         f"<span class='small-muted'>• Active dataset: <code>{name}</code> • {len(df):,} rows • {df.shape[1]:,} columns</span></div>",
         unsafe_allow_html=True,
     )
 
-# Dashboard navigation buttons replace the crowded main tab bar.
-nav_specs = [
-    ("Dashboard", "🏠", "overview, readiness and quick graphs"),
-    ("Cleaning & EDA", "🧹", "cleaning report, missing values and exploration"),
-    ("Modeling & Prediction Explanation", "🤖", "auto/manual models, metrics and explainability"),
-    ("Business Improvements", "💡", "dataset-grounded recommendations"),
-    ("Chat", "💬", "fixed Copilot chat with evidence-backed answers"),
-    ("Evaluation", "🧪", "why it is used: prove prediction-only vs explanation-supported value"),
-    ("Export Data", "📄", "reports, cleaned data, chat and audit evidence"),
-    ("Visualization", "📈", "auto dashboard and manual visual builder"),
-]
-nav_cols = st.columns(4)
-for idx, (page_label, icon, desc) in enumerate(nav_specs):
-    with nav_cols[idx % 4]:
-        active = " ✅" if st.session_state.current_page == page_label else ""
-        st.markdown(f"<div class='nav-card'><div class='nav-title'>{icon} {page_label}{active}</div><div class='nav-text'>{desc}</div></div>", unsafe_allow_html=True)
-        if st.button(f"Open {page_label}", key=f"nav_{page_label}", use_container_width=True):
-            st.session_state.current_page = page_label
-            st.rerun()
-
-current_page = st.session_state.current_page
 
 if current_page == "Dashboard":
     st.markdown("<div class='dashboard-section-title'>Dataset readiness and key details</div>", unsafe_allow_html=True)
@@ -494,6 +747,21 @@ if current_page == "Dashboard":
         q2.metric("Best model", "not trained")
         q3.metric("F1", "n/a")
         q4.metric("ROC-AUC", "n/a")
+
+    st.markdown("<div class='dashboard-section-title'>How modelling is used in the Copilot</div>", unsafe_allow_html=True)
+    st.markdown(
+        """
+<div class='model-use-card'>
+<b>Model is not only shown as a value.</b> The trained model is used for prediction confidence, model suitability verdicts, top-driver explanations, retention-risk reasoning, and evidence-grounded Copilot answers. EDA answers use dataset statistics; prediction/explanation questions use the cached model output and SHAP/fallback explanation; business recommendations combine dataset evidence, model drivers and safety warnings when available.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<div class='dashboard-section-title'>Research contribution snapshot</div>", unsafe_allow_html=True)
+    st.info(contribution_summary())
+    contrib_preview = contribution_table().head(3)
+    st.dataframe(contrib_preview[["id", "contribution", "evidence"]], use_container_width=True, hide_index=True)
 
     st.markdown("<div class='dashboard-section-title'>Automatic visual preview</div>", unsafe_allow_html=True)
     try:
@@ -851,10 +1119,11 @@ if current_page == "Chat":
     st.markdown("### Dataset Copilot Chat")
     st.markdown("<div class='chat-fixed-note'>Answers use only the active dataset, model metrics and explanation artefacts. The chat input stays fixed at the bottom of the page and new answers appear latest-first.</div>", unsafe_allow_html=True)
 
-    tool_cols = st.columns([1, 1, 2, 2])
+    tool_cols = st.columns([1, 1, 1.2, 1.8])
     latest_first = tool_cols[0].toggle("Latest first", value=True, help="Shows the newest answer at the top so you do not need to scroll down after every question.")
     show_context = tool_cols[1].toggle("Show context", value=False, help="Shows the last column/topic remembered for follow-up questions.")
-    if tool_cols[2].button("Clear chat for this dataset", use_container_width=True):
+    screenshot_mode = tool_cols[2].toggle("Screenshot mode", value=True, help="Shows shorter, presentation-ready answers while exports still keep full evidence.")
+    if tool_cols[3].button("Clear chat for this dataset", use_container_width=True):
         st.session_state.chat_history = [item for item in st.session_state.chat_history if item.get("dataset") != name] if st.session_state.chat_history and isinstance(st.session_state.chat_history[0], dict) else []
         st.session_state.chat_contexts.pop(name, None)
         st.rerun()
@@ -892,6 +1161,33 @@ if current_page == "Chat":
     if "job" in df.columns and "marital" in df.columns:
         examples.append("unemployed marital status")
     examples.append("show top drivers")
+    st.markdown("""
+<div class='reviewer-mode-box'>
+  <h4>Reviewer Mode: safe high-standard test questions</h4>
+  <div class='review-tip'>Use these buttons for final screenshots. They reduce spelling/intent mistakes and test readiness, modelling, explanation, business action, memory, audit and safe refusal.</div>
+</div>
+""", unsafe_allow_html=True)
+    reviewer_questions = [
+        ("Readiness", "Is this dataset ready for analysis and modelling?"),
+        ("Model", "Is this model good enough for decision support?"),
+        ("Drivers", "What are the top model drivers?"),
+        ("Prediction evidence", "What prediction evidence supports this recommendation?"),
+        ("Churn segment", "Which contract type has the highest churn?"),
+        ("Tenure", "How does tenure relate to churn?"),
+        ("Retention", "Which customers should be prioritised for retention?"),
+        ("Feedback issues", "What technical or service issues did customers report?"),
+        ("Improve", "Which area should the company improve first?"),
+        ("Memory", "What does short-term memory store in this session?"),
+        ("Audit", "What does the audit trail prove?"),
+        ("Legal refusal", "What happens if I ask for legal advice?"),
+    ]
+    rq_cols = st.columns(4)
+    for idx, (label, q_text) in enumerate(reviewer_questions):
+        with rq_cols[idx % 4]:
+            if st.button(label, key=f"reviewer_mode_{name}_{idx}", use_container_width=True):
+                st.session_state.pending_question = q_text
+                st.rerun()
+
     st.caption("Suggested questions for this active dataset:")
     example_cols = st.columns(min(4, len(examples)))
     for idx, ex in enumerate(examples[:8]):
@@ -921,6 +1217,29 @@ if current_page == "Chat":
         )
         if response.context:
             st.session_state.chat_contexts[name] = response.context
+        st.session_state.session_memory = update_short_term_memory(
+            st.session_state.session_memory,
+            dataset=name,
+            question=question,
+            context=response.context,
+            answer_summary=response.answer,
+        )
+        try:
+            if st.session_state.get("semantic_memory_enabled", True):
+                package = build_evidence_package(
+                    dataset_name=name,
+                    df=df,
+                    question=question,
+                    readiness=readiness_dict_for(name, df),
+                    model_output=model_output,
+                    explanation_output=st.session_state.explanations.get(name),
+                    response_context=response.context,
+                )
+                memory_text = evidence_package_to_text(package) + " | Answer: " + response.answer[:1200]
+                mem_id = add_memory_document(memory_text, metadata={"dataset": name, "type": "copilot_answer", "question": question})
+                st.session_state.semantic_memory_events.append({"dataset": name, "type": "copilot_answer", "memory_id": mem_id, "question": question})
+        except Exception:
+            pass
         st.session_state.chat_history.append({"dataset": name, "question": question, "response": response})
         st.session_state.audit_events_session.append({
             "dataset": name,
@@ -961,7 +1280,7 @@ if current_page == "Chat":
                 st.caption("Interpreted corrections: " + ", ".join(response.corrections))
             if response.interpreted_question:
                 st.caption(f"Interpreted question: `{response.interpreted_question}`")
-            st.markdown(response.answer)
+            st.markdown(compact_copilot_answer(response.answer) if screenshot_mode else response.answer)
             if response.table is not None and not response.table.empty:
                 st.dataframe(response.table, use_container_width=True)
             if response.chart is not None:
@@ -1059,9 +1378,9 @@ if current_page == "Evaluation":
             st.download_button("Download evaluation responses CSV", responses.to_csv(index=False), file_name="evaluation_responses.csv", mime="text/csv", use_container_width=True)
 
 
-if current_page == "Scale Readiness":
-    st.markdown("### Small-scale and large-scale readiness")
-    st.caption("Use this tab to show that the prototype works for the main small-scale dissertation case study and has a clear pathway for larger structured datasets.")
+if current_page == "Research & Memory":
+    st.markdown("### Research contribution, readiness criteria and memory architecture")
+    st.caption("Use this page to explain the research contribution, measurable PASS/WARNING/FAIL criteria, short-term memory and ChromaDB long-term semantic memory.")
 
     prof = dataset_profile(df)
     rows = int(prof.get("rows", len(df)))
@@ -1083,6 +1402,29 @@ if current_page == "Scale Readiness":
     s3.metric("Memory", f"{memory_mb:.2f} MB")
     s4.metric("Scale category", scale_label)
     st.info(scale_msg)
+
+    st.markdown("#### Research contribution")
+    st.write(contribution_summary())
+    st.dataframe(contribution_table(), use_container_width=True, hide_index=True)
+
+    st.markdown("#### Measurable PASS / WARNING / FAIL readiness criteria")
+    st.dataframe(readiness_criteria_table(), use_container_width=True, hide_index=True)
+
+    st.markdown("#### Memory architecture")
+    st.dataframe(memory_architecture_table(), use_container_width=True, hide_index=True)
+    mem_status = memory_backend_status()
+    st.json(mem_status)
+    stm = short_term_memory_table(st.session_state.get("session_memory", {}), dataset=name)
+    if not stm.empty:
+        st.markdown("#### Current short-term session memory")
+        st.dataframe(stm, use_container_width=True)
+    semantic_events = pd.DataFrame(st.session_state.get("semantic_memory_events", []))
+    if not semantic_events.empty:
+        st.markdown("#### Semantic memory events recorded this session")
+        st.dataframe(semantic_events, use_container_width=True, hide_index=True)
+
+    st.markdown("#### Evaluation framework metrics")
+    st.dataframe(evaluation_metrics_table(), use_container_width=True, hide_index=True)
 
     st.markdown("#### Two-level evaluation strategy")
     strategy = pd.DataFrame([
@@ -1129,11 +1471,12 @@ if current_page == "Scale Readiness":
     st.code("""
 Frontend UI
   -> API gateway / FastAPI backend
-  -> Data ingestion and validation service
-  -> Database / data lake / warehouse
+  -> Data ingestion and readiness validation service
+  -> PostgreSQL structured store / data warehouse
+  -> ChromaDB semantic memory layer
   -> Model training and model registry service
-  -> Explanation service
-  -> Business recommendation service
+  -> Explanation service (SHAP/fallback)
+  -> Evidence-package and Copilot answer service
   -> Audit log, RBAC, monitoring and human approval workflow
 """, language="text")
 
@@ -1174,6 +1517,12 @@ if current_page == "Export Data":
         st.download_button("Download Copilot chat answers Markdown", chat_md, file_name=f"{name}_copilot_chat_answers.md", mime="text/markdown", use_container_width=True)
     else:
         st.info("No Copilot chat answers are available yet for export. Ask questions in the Chat page first.")
+
+    semantic_events_df = pd.DataFrame(st.session_state.get("semantic_memory_events", []))
+    if not semantic_events_df.empty:
+        st.download_button("Download semantic memory events CSV", semantic_events_df.to_csv(index=False), file_name=f"{name}_semantic_memory_events.csv", mime="text/csv", use_container_width=True)
+    research_bundle = "# Research contribution\n\n" + contribution_summary() + "\n\n" + contribution_table().to_markdown(index=False) + "\n\n# Readiness criteria\n\n" + readiness_criteria_table().to_markdown(index=False) + "\n\n# Memory architecture\n\n" + memory_architecture_table().to_markdown(index=False) + "\n\n# Evaluation metrics\n\n" + evaluation_metrics_table().to_markdown(index=False)
+    st.download_button("Download research framework Markdown", research_bundle, file_name="research_memory_readiness_framework.md", mime="text/markdown", use_container_width=True)
 
     try:
         sqlite_audit = read_audit_events()

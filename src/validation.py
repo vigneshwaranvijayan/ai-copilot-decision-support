@@ -1,7 +1,7 @@
 """Dataset readiness, quality-gate and trust evidence utilities.
 
-The validation layer is intentionally simple and transparent so that the
-prototype can explain why an answer/model is allowed, warned, or refused.
+The validation layer implements explicit PASS/WARNING/FAIL thresholds so the
+research contribution is measurable and explainable in the dissertation.
 """
 from __future__ import annotations
 
@@ -12,6 +12,17 @@ import json
 import time
 
 import pandas as pd
+
+from .readiness_gates import (
+    FAIL,
+    PASS,
+    WARNING,
+    READINESS_THRESHOLDS,
+    class_balance_status,
+    readiness_criteria_table,
+    row_count_status,
+    status_from_percent,
+)
 
 
 @dataclass
@@ -55,7 +66,6 @@ def dataset_fingerprint(df: pd.DataFrame, name: str = "dataset") -> str:
         "dtypes": [str(df[c].dtype) for c in df.columns],
     }
     try:
-        # Add a tiny sample hash without hashing the full dataset.
         sample = df.head(25).astype("string").fillna("<NA>").to_csv(index=False)
         payload["sample"] = sample
     except Exception:
@@ -65,7 +75,7 @@ def dataset_fingerprint(df: pd.DataFrame, name: str = "dataset") -> str:
 
 
 def _status_rank(status: str) -> int:
-    return {"PASS": 0, "WARNING": 1, "FAIL": 2}.get(status, 1)
+    return {PASS: 0, WARNING: 1, FAIL: 2}.get(status, 1)
 
 
 def _infer_sensitive_columns(df: pd.DataFrame) -> List[str]:
@@ -90,51 +100,92 @@ def build_readiness_report(df: pd.DataFrame, dataset_name: str = "active_dataset
     gates: List[GateResult] = []
 
     if rows == 0 or cols == 0:
-        gates.append(GateResult("Data availability", "FAIL", "Dataset is empty.", f"rows={rows}, columns={cols}"))
+        gates.append(GateResult("Data availability", FAIL, "Dataset is empty or unavailable.", f"rows={rows}, columns={cols}"))
+    elif cols < int(READINESS_THRESHOLDS["column_count"]["pass_min"]):
+        gates.append(GateResult("Data availability", FAIL, "Dataset has too few columns for analysis.", f"rows={rows:,}, columns={cols:,}"))
     else:
-        gates.append(GateResult("Data availability", "PASS", "Dataset contains records and columns.", f"rows={rows:,}, columns={cols:,}"))
+        gates.append(GateResult("Data availability", PASS, "Dataset contains records and usable columns.", f"rows={rows:,}, columns={cols:,}"))
 
     unnamed_cols = [c for c in df.columns if str(c).strip() == "" or str(c).lower().startswith("unnamed")]
-    if unnamed_cols:
-        gates.append(GateResult("Schema readability", "WARNING", "Some columns have weak or generated names.", ", ".join(map(str, unnamed_cols[:8]))))
+    duplicate_col_names = len(set(map(str, df.columns))) != len(df.columns)
+    if duplicate_col_names:
+        gates.append(GateResult("Schema readability", FAIL, "Duplicate column names make evidence tracing unsafe.", "duplicate column names detected"))
+    elif unnamed_cols:
+        gates.append(GateResult("Schema readability", WARNING, "Some columns have weak or generated names.", ", ".join(map(str, unnamed_cols[:8]))))
     else:
-        gates.append(GateResult("Schema readability", "PASS", "Column names are readable.", f"{cols:,} columns"))
+        gates.append(GateResult("Schema readability", PASS, "Column names are readable.", f"{cols:,} columns"))
 
-    if missing_pct >= 40:
-        gates.append(GateResult("Missing-value quality", "FAIL", "Missing values are too high for reliable automatic analysis.", f"{missing_pct:.2f}% missing cells"))
-    elif missing_pct >= 10:
-        gates.append(GateResult("Missing-value quality", "WARNING", "Missing values exist and should be reviewed before decision-making.", f"{missing_pct:.2f}% missing cells"))
+    miss_status = status_from_percent(
+        missing_pct,
+        READINESS_THRESHOLDS["missing_cells_percent"]["pass_max"],
+        READINESS_THRESHOLDS["missing_cells_percent"]["warning_max"],
+    )
+    if miss_status == PASS:
+        miss_msg = "Missing values are within the PASS threshold of 0-5%."
+    elif miss_status == WARNING:
+        miss_msg = "Missing values are within the WARNING range of >5-20%; review before decisions."
     else:
-        gates.append(GateResult("Missing-value quality", "PASS", "Missing values are within an acceptable prototype range.", f"{missing_pct:.2f}% missing cells"))
+        miss_msg = "Missing values exceed 20%, so reliable automatic analysis is not safe."
+    gates.append(GateResult("Missing-value quality", miss_status, miss_msg, f"{missing_pct:.2f}% missing cells"))
 
-    if duplicate_pct >= 25:
-        gates.append(GateResult("Duplicate-row quality", "WARNING", "High duplicate-row rate may distort summaries or models.", f"{duplicate_pct:.2f}% duplicate rows"))
+    dup_status = status_from_percent(
+        duplicate_pct,
+        READINESS_THRESHOLDS["duplicate_rows_percent"]["pass_max"],
+        READINESS_THRESHOLDS["duplicate_rows_percent"]["warning_max"],
+    )
+    if dup_status == PASS:
+        dup_msg = "Duplicate rows are within the PASS threshold of 0-5%."
+    elif dup_status == WARNING:
+        dup_msg = "Duplicate rows are within the WARNING range of >5-15%; review possible repeated records."
     else:
-        gates.append(GateResult("Duplicate-row quality", "PASS", "Duplicate-row rate is acceptable for prototype analysis.", f"{duplicate_pct:.2f}% duplicate rows"))
+        dup_msg = "Duplicate rows exceed 15%, so summaries/models may be distorted."
+    gates.append(GateResult("Duplicate-row quality", dup_status, dup_msg, f"{duplicate_pct:.2f}% duplicate rows"))
+
+    row_status = row_count_status(rows)
+    row_msg = {
+        PASS: "Dataset has enough rows for prototype automatic modelling.",
+        WARNING: "Dataset is small for modelling; use results with caution.",
+        FAIL: "Dataset has fewer than 100 rows, so automatic modelling is not reliable.",
+    }[row_status]
+    gates.append(GateResult("Modelling row-count readiness", row_status, row_msg, f"{rows:,} rows"))
 
     if target_column:
         if target_column not in df.columns:
-            gates.append(GateResult("Model target readiness", "FAIL", "Selected target column is not present in the dataset.", str(target_column)))
+            gates.append(GateResult("Model target readiness", FAIL, "Selected target column is not present in the dataset.", str(target_column)))
         elif df[target_column].dropna().nunique() < 2:
-            gates.append(GateResult("Model target readiness", "FAIL", "Target column has fewer than two classes/values.", str(target_column)))
+            gates.append(GateResult("Model target readiness", FAIL, "Target column has fewer than two classes/values.", str(target_column)))
         else:
-            gates.append(GateResult("Model target readiness", "PASS", "Target column is present and usable for model training.", str(target_column)))
+            gates.append(GateResult("Model target readiness", PASS, "Target column is present and usable for model training.", str(target_column)))
+            if df[target_column].dropna().nunique() <= 20:
+                bal_status, minority, bal_msg = class_balance_status(df[target_column])
+                gates.append(GateResult("Class-balance readiness", bal_status, bal_msg, f"minority_class={minority:.2f}%"))
     else:
-        gates.append(GateResult("Model target readiness", "WARNING", "No target column has been selected yet; EDA and Copilot can still work.", "classification/regression requires a target"))
+        # Dataset-level analysis can still be PASS. Model-specific questions will fail/warn at answer level.
+        gates.append(GateResult("Model target readiness", WARNING, "No target selected yet; EDA and Copilot summary can still work, but prediction requires a target.", "classification/regression requires target selection"))
 
     sensitive = _infer_sensitive_columns(df)
     if sensitive:
-        gates.append(GateResult("Security/privacy readiness", "WARNING", "Possible personal/sensitive fields detected; outputs must be handled carefully.", ", ".join(sensitive[:8])))
+        gates.append(GateResult("Security/privacy readiness", WARNING, "Possible personal/sensitive fields detected; outputs must be handled carefully.", ", ".join(sensitive[:8])))
     else:
-        gates.append(GateResult("Security/privacy readiness", "PASS", "No obvious personal identifier columns detected by the simple prototype check.", "keyword-based scan"))
+        gates.append(GateResult("Security/privacy readiness", PASS, "No obvious personal identifier columns detected by the simple prototype check.", "keyword-based scan"))
 
-    penalty = min(missing_pct * 1.2, 50) + min(duplicate_pct * 0.5, 20)
-    if rows == 0 or cols == 0:
-        penalty += 50
+    # Transparent quality score: missingness and duplicates dominate; empty/invalid data heavily penalised.
+    penalty = min(missing_pct * 2.0, 55) + min(duplicate_pct * 1.2, 30)
+    if rows == 0 or cols < 2:
+        penalty += 60
+    if row_status == WARNING:
+        penalty += 5
+    elif row_status == FAIL:
+        penalty += 15
     quality_score = max(0.0, round(100 - penalty, 2))
 
-    worst = max((_status_rank(g.status) for g in gates), default=1)
-    overall = "FAIL" if any(g.status == "FAIL" for g in gates if g.gate in {"Data availability", "Missing-value quality"}) else ("WARNING" if worst >= 1 else "PASS")
+    hard_fail_gates = {"Data availability", "Schema readability", "Missing-value quality", "Duplicate-row quality"}
+    if any(g.status == FAIL and g.gate in hard_fail_gates for g in gates):
+        overall = FAIL
+    elif any(g.status == WARNING and g.gate != "Model target readiness" for g in gates):
+        overall = WARNING
+    else:
+        overall = PASS
 
     return ReadinessReport(
         dataset_id=dataset_fingerprint(df, dataset_name),
@@ -152,8 +203,8 @@ def build_readiness_report(df: pd.DataFrame, dataset_name: str = "active_dataset
 
 
 def status_badge_html(status: str) -> str:
-    colours = {"PASS": "#047857", "WARNING": "#b45309", "FAIL": "#b91c1c"}
-    bg = {"PASS": "#ecfdf5", "WARNING": "#fffbeb", "FAIL": "#fef2f2"}
+    colours = {PASS: "#047857", WARNING: "#b45309", FAIL: "#b91c1c"}
+    bg = {PASS: "#ecfdf5", WARNING: "#fffbeb", FAIL: "#fef2f2"}
     color = colours.get(status, "#475569")
     back = bg.get(status, "#f8fafc")
     return f"<span style='background:{back}; color:{color}; padding:0.2rem 0.55rem; border-radius:999px; font-weight:700; font-size:0.8rem'>{status}</span>"

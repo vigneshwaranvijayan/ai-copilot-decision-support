@@ -1,3 +1,5 @@
+ARCHIVE NOTE: This is an earlier-version test note retained only as development evidence. Use final_test_results_v15.txt for current final evidence.
+
 Version: v13.2 Dataset-grounded Copilot QA fix
 Checks completed:
 - python -m py_compile app.py src/*.py: passed

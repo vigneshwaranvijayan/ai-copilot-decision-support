@@ -1,0 +1,23 @@
+Final v15.1 Reviewer-Ready Copilot Routing Fix
+
+Date: 2026-08-03
+
+Purpose:
+This patch improves Copilot answer reliability for ambiguous business and feedback questions found during manual testing.
+
+Key fixes:
+1. Added dataset-use-case intent for questions such as "what uses this data?".
+2. Prevented short follow-up context from wrongly appending previous feedback columns to dataset-use questions.
+3. Prevented fuzzy-normalisation from changing normal words such as "customer" into ID columns such as "customerid".
+4. ID-like columns such as customerid/accountid/userid are no longer selected as analysis columns unless the user explicitly asks for IDs.
+5. Added technical/service issue intent so questions such as "any technical issue customer found?" route to feedback theme analysis.
+6. Added generic improvement intent so questions such as "which area can we improve?" use customerfeedback evidence when available.
+7. Added technical issue theme prioritisation so internet/service reliability and support themes are prioritised for technical/service questions.
+8. Added regression tests for the previously failed cases.
+
+Test commands:
+python -m py_compile app.py src/*.py
+pytest -q
+
+Result:
+32 passed

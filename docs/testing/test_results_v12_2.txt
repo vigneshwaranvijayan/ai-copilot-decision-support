@@ -1,1 +1,3 @@
+ARCHIVE NOTE: This is an earlier-version test note retained only as development evidence. Use final_test_results_v15.txt for current final evidence.
+
 25 passed

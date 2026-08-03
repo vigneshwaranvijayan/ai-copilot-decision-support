@@ -246,3 +246,76 @@ def test_common_customerfeedback_issue_uses_theme_engine():
     assert 'recommended_action' in response.table.columns
     assert 'customerfeedback' in response.answer.lower()
     assert 'most common' in response.answer.lower() or 'common' in response.answer.lower()
+
+
+def test_dataset_use_question_returns_use_cases_not_feedback_values():
+    df = pd.DataFrame({
+        'customerid': ['C1', 'C2', 'C3'],
+        'churn': [1, 0, 1],
+        'customerfeedback': [
+            'internet service is slow and expensive',
+            'happy with support and value',
+            'cancel because connection has problems'
+        ],
+    })
+    response = answer_question(
+        'what useses this data?',
+        df,
+        dataset_name='telco_prep.csv',
+        target_column='churn',
+        positive_label=1,
+        previous_context={'text_col': 'customerfeedback'},
+    )
+    assert response.table is not None
+    assert 'use_case' in response.table.columns
+    assert 'customerfeedback' not in response.interpreted_question.lower()
+    assert 'decision-support purpose' in response.answer.lower()
+
+
+def test_technical_issue_uses_feedback_not_customerid_frequency():
+    df = pd.DataFrame({
+        'customerid': ['C1', 'C2', 'C3', 'C4'],
+        'churn': [1, 1, 0, 0],
+        'customerfeedback': [
+            'The internet connection is slow and unreliable.',
+            'There was an outage and support was delayed.',
+            'Good service and happy customer.',
+            'Billing is okay but internet sometimes disconnects.',
+        ],
+    })
+    response = answer_question(
+        'any techincal issuse customer found??',
+        df,
+        dataset_name='telco_prep.csv',
+        target_column='churn',
+        positive_label=1,
+    )
+    assert response.table is not None
+    assert 'theme' in response.table.columns
+    assert 'recommended_action' in response.table.columns
+    assert 'customerid' not in response.context.get('topic', '')
+    assert 'customerid' not in [c.lower() for c in response.table.columns[:2]]
+    assert 'technical' in response.answer.lower() or 'service' in response.answer.lower()
+
+
+def test_generic_improvement_prefers_feedback_themes_when_feedback_exists():
+    df = pd.DataFrame({
+        'customerid': ['C1', 'C2', 'C3'],
+        'churn': [1, 0, 1],
+        'customerfeedback': [
+            'monthly charges are expensive and I may cancel',
+            'happy with value and support',
+            'internet service is slow and unreliable'
+        ],
+    })
+    response = answer_question(
+        'which area we can improve to develop',
+        df,
+        dataset_name='telco_prep.csv',
+        target_column='churn',
+        positive_label=1,
+    )
+    assert response.table is not None
+    assert 'theme' in response.table.columns
+    assert 'recommended_action' in response.table.columns
+    assert response.context.get('topic') == 'feedback_business_actions'

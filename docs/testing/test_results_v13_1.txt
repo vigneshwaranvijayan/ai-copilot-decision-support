@@ -1,3 +1,5 @@
+ARCHIVE NOTE: This is an earlier-version test note retained only as development evidence. Use final_test_results_v15.txt for current final evidence.
+
 Dataset-Grounded AI Copilot v13.1 feedback evidence fix
 Date: 2026-07-20
 

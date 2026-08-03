@@ -12,7 +12,7 @@ pytest>=7.4
 # Optional advanced model. The app works without it.
 xgboost>=2.0; platform_system != 'Darwin' or platform_machine != 'arm64'
 tabulate>=0.9
-# Optional database connectors for integrated data sources.
+# Optional structured database connector and semantic memory backend.
 sqlalchemy>=2.0
 psycopg2-binary>=2.9
-pymongo>=4.6
+chromadb>=0.5; python_version >= "3.9"

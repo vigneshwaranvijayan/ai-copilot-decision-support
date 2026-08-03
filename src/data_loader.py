@@ -233,20 +233,3 @@ def load_postgres_table(connection_uri: str, table_or_query: str, limit: int = 1
         query = f"SELECT * FROM ({query}) AS q LIMIT {int(limit)}"
     df = pd.read_sql_query(text(query), engine)
     return LoadedDataset(name="postgres_dataset", dataframe=df, source_type="postgresql", notes="Loaded from PostgreSQL")
-
-
-def load_mongo_collection(mongo_uri: str, database: str, collection: str, limit: int = 100000) -> LoadedDataset:
-    """Load documents from MongoDB using pymongo when available."""
-    if not mongo_uri or not database or not collection:
-        raise ValueError("Mongo URI, database and collection are required")
-    try:
-        from pymongo import MongoClient  # type: ignore
-    except Exception as exc:  # pragma: no cover
-        raise ImportError("Install pymongo to use MongoDB integration") from exc
-    client = MongoClient(mongo_uri, serverSelectionTimeoutMS=8000)
-    docs = list(client[database][collection].find({}).limit(int(limit)))
-    for d in docs:
-        if "_id" in d:
-            d["_id"] = str(d["_id"])
-    df = pd.json_normalize(docs)
-    return LoadedDataset(name="mongo_dataset", dataframe=df, source_type="mongodb", notes="Loaded from MongoDB collection")

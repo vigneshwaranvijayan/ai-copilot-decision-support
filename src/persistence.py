@@ -1,7 +1,7 @@
 """Local audit persistence for the proof-of-concept.
 
 SQLite is used for the local prototype because it is easy to run without
-separate infrastructure. The architecture remains PostgreSQL/MongoDB-ready.
+separate infrastructure. The architecture remains PostgreSQL-ready and uses ChromaDB as the semantic long-term memory layer.
 """
 from __future__ import annotations
 
