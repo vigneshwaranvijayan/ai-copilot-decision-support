@@ -1,3 +1,18 @@
+# Final Working MSc Package - Explainable AI Copilot for Business Decision Support
+
+This package is based on the last working v15.5 repository and keeps the complete UI, architecture diagrams, research notes, testing evidence, memory design, visual analytics and Copilot grounding files. It has been cleaned for final use by removing the `.git` folder and aligning the assessed classification workflow with the dissertation: Logistic Regression, Random Forest, Gradient Boosting and MLP Neural Network Baseline.
+
+Current local test check: `pytest -q` passes after packaging.
+
+## Final dissertation scope
+
+- Main case study: customer churn decision support.
+- Supporting capability: other suitable structured datasets can be tested for data upload, validation, visualisation, modelling and Copilot answers.
+- Not included as a main case study: any specific external organisational case or employee-specific decision-making.
+- Main contribution: data analysis, visualisation, modelling, SHAP/fallback explanation, Copilot chat, evidence grounding, memory support, recommendation, safety warning and exportable results.
+
+---
+
 # Dataset-Grounded AI Copilot v15.5 Remaining Reviewer Fix
 
 v15.5 fixes remaining reviewer/demo questions found from the latest exported chat file: research-gap, ChromaDB, export/evidence, competitor-pricing safe refusal, and false FAIL grounding for relationship evidence.
@@ -104,13 +119,12 @@ Additional datasets such as bank marketing, online retail/sales and customer fee
 
 ## Models used
 
-Classification-first models:
+Classification models used in the assessed workflow:
 
 - Logistic Regression
 - Random Forest
-- Extra Trees
 - Gradient Boosting
-- Optional XGBoost when installed
+- MLP Neural Network Baseline
 
 Regression is optional for numeric business targets:
 

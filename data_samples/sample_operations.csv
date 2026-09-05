@@ -1,0 +1,301 @@
+TicketID,CreatedDate,ServiceArea,Priority,Status,ResolutionTimeHours,SLABreach,AssignedTeam
+T00000,2025-03-01 00:00:00,Platform,High,Open,33.99,Yes,Team C
+T00001,2025-03-01 12:00:00,Security,Low,In Progress,23.92,Yes,Team C
+T00002,2025-03-02 00:00:00,Network,Medium,Closed,2.96,No,Team A
+T00003,2025-03-02 12:00:00,Network,Low,In Progress,5.66,No,Team C
+T00004,2025-03-03 00:00:00,Security,High,Resolved,14.48,No,Team C
+T00005,2025-03-03 12:00:00,Platform,Low,Closed,24.96,Yes,Team A
+T00006,2025-03-04 00:00:00,IoT,Low,Resolved,7.93,No,Team C
+T00007,2025-03-04 12:00:00,Platform,High,In Progress,15.79,No,Team B
+T00008,2025-03-05 00:00:00,Data,Medium,In Progress,12.77,No,Team A
+T00009,2025-03-05 12:00:00,IoT,Low,Resolved,24.76,Yes,Team A
+T00010,2025-03-06 00:00:00,Data,Low,Resolved,5.02,No,Team B
+T00011,2025-03-06 12:00:00,Platform,Medium,Open,10.44,No,Team A
+T00012,2025-03-07 00:00:00,Network,Low,Resolved,15.82,No,Team C
+T00013,2025-03-07 12:00:00,Platform,Low,Resolved,4.44,No,Team C
+T00014,2025-03-08 00:00:00,Platform,Medium,In Progress,12.06,No,Team C
+T00015,2025-03-08 12:00:00,Platform,Low,Resolved,10.78,No,Team B
+T00016,2025-03-09 00:00:00,IoT,Medium,Open,21.22,Yes,Team B
+T00017,2025-03-09 12:00:00,IoT,Medium,In Progress,19.45,Yes,Team C
+T00018,2025-03-10 00:00:00,Platform,Low,Closed,23.15,Yes,Team C
+T00019,2025-03-10 12:00:00,Network,Low,In Progress,14.06,No,Team A
+T00020,2025-03-11 00:00:00,Network,Low,Resolved,22.29,Yes,Team B
+T00021,2025-03-11 12:00:00,Security,Low,Resolved,5.27,No,Team C
+T00022,2025-03-12 00:00:00,Platform,Low,In Progress,16.2,No,Team C
+T00023,2025-03-12 12:00:00,IoT,High,Closed,10.57,No,Team C
+T00024,2025-03-13 00:00:00,Data,High,In Progress,6.33,No,Team A
+T00025,2025-03-13 12:00:00,Security,Medium,In Progress,5.06,No,Team B
+T00026,2025-03-14 00:00:00,IoT,Medium,Closed,7.45,No,Team A
+T00027,2025-03-14 12:00:00,IoT,Medium,Resolved,6.07,No,Team C
+T00028,2025-03-15 00:00:00,Data,High,Resolved,38.92,Yes,Team B
+T00029,2025-03-15 12:00:00,IoT,Low,Open,14.36,No,Team A
+T00030,2025-03-16 00:00:00,Security,Low,Open,19.64,Yes,Team A
+T00031,2025-03-16 12:00:00,Platform,Low,Resolved,5.68,No,Team C
+T00032,2025-03-17 00:00:00,Security,Low,In Progress,1.92,No,Team C
+T00033,2025-03-17 12:00:00,Network,Low,In Progress,38.09,Yes,Team C
+T00034,2025-03-18 00:00:00,IoT,High,Closed,5.25,No,Team C
+T00035,2025-03-18 12:00:00,Platform,High,In Progress,9.3,No,Team C
+T00036,2025-03-19 00:00:00,Security,Low,Open,17.16,No,Team C
+T00037,2025-03-19 12:00:00,IoT,Medium,Open,7.66,No,Team C
+T00038,2025-03-20 00:00:00,IoT,Medium,Resolved,12.26,No,Team C
+T00039,2025-03-20 12:00:00,Security,Medium,Resolved,4.35,No,Team B
+T00040,2025-03-21 00:00:00,IoT,Medium,Closed,14.22,No,Team C
+T00041,2025-03-21 12:00:00,Network,Low,Open,3.15,No,Team C
+T00042,2025-03-22 00:00:00,IoT,High,In Progress,10.85,No,Team A
+T00043,2025-03-22 12:00:00,Platform,Critical,Resolved,24.46,Yes,Team C
+T00044,2025-03-23 00:00:00,Platform,Medium,In Progress,6.32,No,Team B
+T00045,2025-03-23 12:00:00,Platform,Medium,Resolved,12.88,No,Team A
+T00046,2025-03-24 00:00:00,IoT,Medium,Closed,35.12,Yes,Team A
+T00047,2025-03-24 12:00:00,Network,Low,Resolved,15.0,No,Team A
+T00048,2025-03-25 00:00:00,Network,Low,Resolved,13.61,No,Team C
+T00049,2025-03-25 12:00:00,Platform,Medium,Closed,19.44,Yes,Team C
+T00050,2025-03-26 00:00:00,Data,Low,Open,10.67,No,Team A
+T00051,2025-03-26 12:00:00,Network,High,Closed,10.51,No,Team B
+T00052,2025-03-27 00:00:00,Platform,Medium,Resolved,22.56,Yes,Team B
+T00053,2025-03-27 12:00:00,Security,Medium,Resolved,18.9,Yes,Team B
+T00054,2025-03-28 00:00:00,Data,Low,Closed,5.36,No,Team B
+T00055,2025-03-28 12:00:00,IoT,Critical,Resolved,16.92,No,Team C
+T00056,2025-03-29 00:00:00,Data,Low,Resolved,15.09,No,Team B
+T00057,2025-03-29 12:00:00,Security,Low,In Progress,2.57,No,Team B
+T00058,2025-03-30 00:00:00,Network,Low,Resolved,15.05,No,Team B
+T00059,2025-03-30 12:00:00,IoT,Medium,Resolved,13.86,No,Team B
+T00060,2025-03-31 00:00:00,Data,Critical,In Progress,11.68,No,Team C
+T00061,2025-03-31 12:00:00,Data,Low,Resolved,31.3,Yes,Team B
+T00062,2025-04-01 00:00:00,IoT,High,Resolved,12.1,No,Team C
+T00063,2025-04-01 12:00:00,Security,Low,In Progress,7.52,No,Team B
+T00064,2025-04-02 00:00:00,Platform,Medium,Open,20.11,Yes,Team C
+T00065,2025-04-02 12:00:00,Security,Low,Resolved,22.77,Yes,Team C
+T00066,2025-04-03 00:00:00,IoT,Medium,Open,4.64,No,Team C
+T00067,2025-04-03 12:00:00,Network,Medium,Open,9.86,No,Team B
+T00068,2025-04-04 00:00:00,Network,Medium,Resolved,1.76,No,Team B
+T00069,2025-04-04 12:00:00,Network,Low,Open,19.36,Yes,Team B
+T00070,2025-04-05 00:00:00,Data,High,In Progress,14.77,No,Team B
+T00071,2025-04-05 12:00:00,Network,Critical,Resolved,10.95,No,Team C
+T00072,2025-04-06 00:00:00,Platform,Medium,In Progress,5.99,No,Team C
+T00073,2025-04-06 12:00:00,Data,Medium,Closed,4.28,No,Team C
+T00074,2025-04-07 00:00:00,Platform,High,Closed,9.71,No,Team C
+T00075,2025-04-07 12:00:00,Platform,Low,Resolved,1.95,No,Team C
+T00076,2025-04-08 00:00:00,IoT,High,Closed,30.64,Yes,Team B
+T00077,2025-04-08 12:00:00,IoT,Low,Closed,4.8,No,Team A
+T00078,2025-04-09 00:00:00,Platform,High,In Progress,15.18,No,Team B
+T00079,2025-04-09 12:00:00,Platform,Low,Resolved,15.0,No,Team C
+T00080,2025-04-10 00:00:00,Platform,Low,Open,22.79,Yes,Team C
+T00081,2025-04-10 12:00:00,Security,Medium,Resolved,11.46,No,Team B
+T00082,2025-04-11 00:00:00,Security,Medium,Resolved,9.11,No,Team C
+T00083,2025-04-11 12:00:00,IoT,High,Open,15.81,No,Team A
+T00084,2025-04-12 00:00:00,Network,Critical,In Progress,12.62,No,Team B
+T00085,2025-04-12 12:00:00,Security,Low,Closed,4.95,No,Team C
+T00086,2025-04-13 00:00:00,IoT,Low,In Progress,8.95,No,Team B
+T00087,2025-04-13 12:00:00,IoT,Medium,In Progress,1.26,No,Team C
+T00088,2025-04-14 00:00:00,IoT,Medium,In Progress,6.52,No,Team B
+T00089,2025-04-14 12:00:00,Network,Medium,Resolved,7.72,No,Team B
+T00090,2025-04-15 00:00:00,Data,High,Closed,39.35,Yes,Team B
+T00091,2025-04-15 12:00:00,Platform,High,Closed,28.73,Yes,Team C
+T00092,2025-04-16 00:00:00,Data,Low,Resolved,14.96,No,Team A
+T00093,2025-04-16 12:00:00,Network,Medium,In Progress,19.69,Yes,Team A
+T00094,2025-04-17 00:00:00,Security,Medium,Open,4.91,No,Team B
+T00095,2025-04-17 12:00:00,Data,Medium,Resolved,12.04,No,Team A
+T00096,2025-04-18 00:00:00,Network,Low,Closed,18.09,Yes,Team B
+T00097,2025-04-18 12:00:00,Platform,Medium,Resolved,4.95,No,Team B
+T00098,2025-04-19 00:00:00,Platform,Medium,Resolved,3.07,No,Team A
+T00099,2025-04-19 12:00:00,Data,Low,Resolved,13.89,No,Team B
+T00100,2025-04-20 00:00:00,Data,High,Resolved,7.41,No,Team B
+T00101,2025-04-20 12:00:00,Platform,Low,Resolved,15.91,No,Team C
+T00102,2025-04-21 00:00:00,Security,Medium,Resolved,22.53,Yes,Team A
+T00103,2025-04-21 12:00:00,Data,Medium,Resolved,5.09,No,Team C
+T00104,2025-04-22 00:00:00,Platform,High,Resolved,9.44,No,Team B
+T00105,2025-04-22 12:00:00,Network,Low,Closed,22.1,Yes,Team C
+T00106,2025-04-23 00:00:00,Platform,Low,Resolved,11.5,No,Team A
+T00107,2025-04-23 12:00:00,Security,Low,Open,20.2,Yes,Team A
+T00108,2025-04-24 00:00:00,Network,Medium,In Progress,9.2,No,Team B
+T00109,2025-04-24 12:00:00,Security,Low,Resolved,9.73,No,Team B
+T00110,2025-04-25 00:00:00,Platform,High,Resolved,15.29,No,Team B
+T00111,2025-04-25 12:00:00,Data,Low,Resolved,30.85,Yes,Team A
+T00112,2025-04-26 00:00:00,Security,Low,Resolved,19.16,Yes,Team B
+T00113,2025-04-26 12:00:00,IoT,Medium,In Progress,6.34,No,Team C
+T00114,2025-04-27 00:00:00,Data,High,Resolved,16.66,No,Team C
+T00115,2025-04-27 12:00:00,Security,High,Resolved,12.72,No,Team A
+T00116,2025-04-28 00:00:00,Network,High,Resolved,11.51,No,Team B
+T00117,2025-04-28 12:00:00,Platform,Medium,Resolved,15.61,No,Team B
+T00118,2025-04-29 00:00:00,Network,High,Open,17.5,No,Team B
+T00119,2025-04-29 12:00:00,Network,Medium,Resolved,5.14,No,Team C
+T00120,2025-04-30 00:00:00,Data,Low,Closed,11.31,No,Team B
+T00121,2025-04-30 12:00:00,Data,Medium,Closed,7.33,No,Team C
+T00122,2025-05-01 00:00:00,Security,High,Resolved,18.94,Yes,Team C
+T00123,2025-05-01 12:00:00,Network,Low,In Progress,7.08,No,Team A
+T00124,2025-05-02 00:00:00,Data,Medium,Resolved,9.77,No,Team C
+T00125,2025-05-02 12:00:00,IoT,Medium,Resolved,7.68,No,Team A
+T00126,2025-05-03 00:00:00,Platform,Medium,In Progress,2.3,No,Team B
+T00127,2025-05-03 12:00:00,Security,Low,Closed,29.87,Yes,Team B
+T00128,2025-05-04 00:00:00,Data,Medium,Open,11.22,No,Team B
+T00129,2025-05-04 12:00:00,Security,High,Open,34.54,Yes,Team B
+T00130,2025-05-05 00:00:00,Data,Low,Open,11.59,No,Team A
+T00131,2025-05-05 12:00:00,IoT,Medium,Open,17.54,No,Team A
+T00132,2025-05-06 00:00:00,Platform,Low,Closed,6.69,No,Team C
+T00133,2025-05-06 12:00:00,IoT,Low,Resolved,6.82,No,Team C
+T00134,2025-05-07 00:00:00,Platform,Critical,In Progress,18.77,Yes,Team C
+T00135,2025-05-07 12:00:00,IoT,Medium,Resolved,30.36,Yes,Team B
+T00136,2025-05-08 00:00:00,Data,Medium,In Progress,5.3,No,Team C
+T00137,2025-05-08 12:00:00,Platform,Low,In Progress,1.75,No,Team B
+T00138,2025-05-09 00:00:00,IoT,Critical,Open,29.77,Yes,Team A
+T00139,2025-05-09 12:00:00,Data,Low,Resolved,18.27,Yes,Team A
+T00140,2025-05-10 00:00:00,Network,High,Open,12.02,No,Team A
+T00141,2025-05-10 12:00:00,Security,Low,Closed,37.99,Yes,Team B
+T00142,2025-05-11 00:00:00,IoT,Low,In Progress,39.03,Yes,Team C
+T00143,2025-05-11 12:00:00,IoT,Medium,Resolved,2.13,No,Team A
+T00144,2025-05-12 00:00:00,Network,Low,Closed,6.56,No,Team B
+T00145,2025-05-12 12:00:00,Security,Medium,Open,10.71,No,Team A
+T00146,2025-05-13 00:00:00,Security,Low,Open,14.66,No,Team B
+T00147,2025-05-13 12:00:00,Data,High,Closed,17.18,No,Team B
+T00148,2025-05-14 00:00:00,IoT,High,Resolved,15.19,No,Team A
+T00149,2025-05-14 12:00:00,Platform,High,Resolved,8.63,No,Team B
+T00150,2025-05-15 00:00:00,IoT,Low,Open,15.94,No,Team A
+T00151,2025-05-15 12:00:00,Network,High,In Progress,20.55,Yes,Team C
+T00152,2025-05-16 00:00:00,IoT,Critical,Resolved,28.77,Yes,Team C
+T00153,2025-05-16 12:00:00,IoT,Low,Closed,4.08,No,Team C
+T00154,2025-05-17 00:00:00,Security,Low,In Progress,9.49,No,Team C
+T00155,2025-05-17 12:00:00,Data,High,Closed,11.72,No,Team A
+T00156,2025-05-18 00:00:00,Platform,Low,Resolved,4.01,No,Team C
+T00157,2025-05-18 12:00:00,Data,Medium,Open,9.38,No,Team A
+T00158,2025-05-19 00:00:00,Security,High,In Progress,8.84,No,Team C
+T00159,2025-05-19 12:00:00,IoT,Low,In Progress,3.43,No,Team C
+T00160,2025-05-20 00:00:00,Network,Medium,Resolved,18.43,Yes,Team C
+T00161,2025-05-20 12:00:00,Data,Medium,Resolved,7.99,No,Team C
+T00162,2025-05-21 00:00:00,IoT,Low,Resolved,6.31,No,Team C
+T00163,2025-05-21 12:00:00,IoT,High,In Progress,28.15,Yes,Team C
+T00164,2025-05-22 00:00:00,Data,Low,Resolved,16.89,No,Team A
+T00165,2025-05-22 12:00:00,IoT,Medium,Resolved,1.55,No,Team A
+T00166,2025-05-23 00:00:00,Data,High,Resolved,18.73,Yes,Team C
+T00167,2025-05-23 12:00:00,Platform,Low,Resolved,14.68,No,Team A
+T00168,2025-05-24 00:00:00,Platform,High,In Progress,13.09,No,Team B
+T00169,2025-05-24 12:00:00,Security,Low,Resolved,8.83,No,Team A
+T00170,2025-05-25 00:00:00,IoT,Medium,In Progress,2.58,No,Team B
+T00171,2025-05-25 12:00:00,Security,Low,In Progress,37.72,Yes,Team C
+T00172,2025-05-26 00:00:00,Data,Medium,Open,9.36,No,Team C
+T00173,2025-05-26 12:00:00,Data,High,Resolved,18.18,Yes,Team B
+T00174,2025-05-27 00:00:00,Security,High,Resolved,13.75,No,Team B
+T00175,2025-05-27 12:00:00,Data,Critical,In Progress,14.39,No,Team B
+T00176,2025-05-28 00:00:00,Platform,Medium,Closed,19.38,Yes,Team B
+T00177,2025-05-28 12:00:00,IoT,High,Closed,16.39,No,Team B
+T00178,2025-05-29 00:00:00,Platform,Medium,Open,9.41,No,Team C
+T00179,2025-05-29 12:00:00,Platform,High,Resolved,18.08,Yes,Team A
+T00180,2025-05-30 00:00:00,Security,Medium,In Progress,10.42,No,Team B
+T00181,2025-05-30 12:00:00,Platform,High,Closed,35.87,Yes,Team B
+T00182,2025-05-31 00:00:00,Data,Low,In Progress,18.95,Yes,Team B
+T00183,2025-05-31 12:00:00,Security,Medium,In Progress,15.69,No,Team A
+T00184,2025-06-01 00:00:00,Network,High,Resolved,6.9,No,Team A
+T00185,2025-06-01 12:00:00,Data,Low,In Progress,16.06,No,Team B
+T00186,2025-06-02 00:00:00,Data,Low,Resolved,15.79,No,Team C
+T00187,2025-06-02 12:00:00,Platform,Critical,Resolved,12.91,No,Team C
+T00188,2025-06-03 00:00:00,Platform,Medium,In Progress,2.83,No,Team C
+T00189,2025-06-03 12:00:00,IoT,Low,Resolved,18.43,Yes,Team C
+T00190,2025-06-04 00:00:00,Security,Low,Closed,19.98,Yes,Team B
+T00191,2025-06-04 12:00:00,IoT,Medium,Closed,6.85,No,Team A
+T00192,2025-06-05 00:00:00,Security,Medium,Resolved,6.61,No,Team B
+T00193,2025-06-05 12:00:00,Data,Critical,In Progress,20.24,Yes,Team C
+T00194,2025-06-06 00:00:00,Network,Critical,Open,15.97,No,Team B
+T00195,2025-06-06 12:00:00,Data,Medium,Closed,2.77,No,Team C
+T00196,2025-06-07 00:00:00,IoT,Medium,Resolved,4.86,No,Team A
+T00197,2025-06-07 12:00:00,IoT,Low,Resolved,13.83,No,Team A
+T00198,2025-06-08 00:00:00,Data,High,Closed,9.1,No,Team A
+T00199,2025-06-08 12:00:00,IoT,Low,Open,20.65,Yes,Team A
+T00200,2025-06-09 00:00:00,Platform,Low,Resolved,15.62,No,Team B
+T00201,2025-06-09 12:00:00,Platform,Critical,In Progress,22.21,Yes,Team B
+T00202,2025-06-10 00:00:00,Network,High,Open,16.06,No,Team B
+T00203,2025-06-10 12:00:00,IoT,Low,Resolved,6.16,No,Team A
+T00204,2025-06-11 00:00:00,Network,Medium,In Progress,17.09,No,Team B
+T00205,2025-06-11 12:00:00,IoT,Medium,Closed,6.02,No,Team A
+T00206,2025-06-12 00:00:00,Platform,Low,In Progress,21.41,Yes,Team B
+T00207,2025-06-12 12:00:00,Data,Low,Closed,28.73,Yes,Team A
+T00208,2025-06-13 00:00:00,Data,Low,Resolved,12.34,No,Team A
+T00209,2025-06-13 12:00:00,Data,Medium,Resolved,26.33,Yes,Team A
+T00210,2025-06-14 00:00:00,Platform,Medium,Closed,4.92,No,Team A
+T00211,2025-06-14 12:00:00,Data,Medium,Resolved,15.74,No,Team B
+T00212,2025-06-15 00:00:00,Platform,Low,In Progress,10.98,No,Team B
+T00213,2025-06-15 12:00:00,Platform,Critical,Open,26.65,Yes,Team B
+T00214,2025-06-16 00:00:00,Data,Medium,In Progress,1.66,No,Team B
+T00215,2025-06-16 12:00:00,Network,High,Closed,21.91,Yes,Team A
+T00216,2025-06-17 00:00:00,Security,Low,Resolved,6.64,No,Team A
+T00217,2025-06-17 12:00:00,Data,Medium,In Progress,11.38,No,Team C
+T00218,2025-06-18 00:00:00,Network,High,In Progress,41.31,Yes,Team C
+T00219,2025-06-18 12:00:00,Network,Low,Resolved,16.09,No,Team A
+T00220,2025-06-19 00:00:00,IoT,Low,Resolved,14.69,No,Team A
+T00221,2025-06-19 12:00:00,Network,Low,In Progress,13.88,No,Team A
+T00222,2025-06-20 00:00:00,Security,Low,Closed,22.89,Yes,Team A
+T00223,2025-06-20 12:00:00,Data,Medium,Resolved,19.07,Yes,Team A
+T00224,2025-06-21 00:00:00,IoT,Low,Closed,13.99,No,Team B
+T00225,2025-06-21 12:00:00,Platform,Low,In Progress,12.81,No,Team C
+T00226,2025-06-22 00:00:00,Platform,Medium,Resolved,12.22,No,Team C
+T00227,2025-06-22 12:00:00,Data,Low,Open,10.55,No,Team C
+T00228,2025-06-23 00:00:00,Platform,Low,In Progress,4.02,No,Team B
+T00229,2025-06-23 12:00:00,IoT,Medium,Resolved,15.86,No,Team B
+T00230,2025-06-24 00:00:00,Security,Low,Resolved,7.18,No,Team B
+T00231,2025-06-24 12:00:00,Data,Low,In Progress,9.64,No,Team A
+T00232,2025-06-25 00:00:00,Data,Low,Closed,19.93,Yes,Team B
+T00233,2025-06-25 12:00:00,Platform,Low,Open,10.73,No,Team A
+T00234,2025-06-26 00:00:00,Data,Medium,Resolved,10.14,No,Team B
+T00235,2025-06-26 12:00:00,Platform,Low,Closed,12.37,No,Team A
+T00236,2025-06-27 00:00:00,IoT,Low,Resolved,8.75,No,Team C
+T00237,2025-06-27 12:00:00,Data,Critical,Closed,44.8,Yes,Team C
+T00238,2025-06-28 00:00:00,IoT,High,Resolved,37.63,Yes,Team C
+T00239,2025-06-28 12:00:00,Network,Low,Closed,33.08,Yes,Team A
+T00240,2025-06-29 00:00:00,Network,Low,Resolved,13.91,No,Team A
+T00241,2025-06-29 12:00:00,Platform,Medium,Resolved,6.82,No,Team C
+T00242,2025-06-30 00:00:00,IoT,High,In Progress,24.28,Yes,Team C
+T00243,2025-06-30 12:00:00,Platform,High,Resolved,12.8,No,Team B
+T00244,2025-07-01 00:00:00,Data,Low,In Progress,21.46,Yes,Team A
+T00245,2025-07-01 12:00:00,Platform,Low,Closed,6.57,No,Team B
+T00246,2025-07-02 00:00:00,Network,Medium,In Progress,14.61,No,Team B
+T00247,2025-07-02 12:00:00,Data,High,In Progress,27.47,Yes,Team C
+T00248,2025-07-03 00:00:00,Network,High,Closed,13.17,No,Team B
+T00249,2025-07-03 12:00:00,Platform,Low,In Progress,9.15,No,Team A
+T00250,2025-07-04 00:00:00,Security,Medium,In Progress,3.12,No,Team C
+T00251,2025-07-04 12:00:00,IoT,Low,Resolved,6.74,No,Team C
+T00252,2025-07-05 00:00:00,IoT,Medium,Open,13.72,No,Team A
+T00253,2025-07-05 12:00:00,IoT,High,Open,19.18,Yes,Team A
+T00254,2025-07-06 00:00:00,Data,Medium,Resolved,16.71,No,Team A
+T00255,2025-07-06 12:00:00,Data,Low,In Progress,2.07,No,Team C
+T00256,2025-07-07 00:00:00,Security,Medium,In Progress,8.83,No,Team B
+T00257,2025-07-07 12:00:00,Data,Medium,Open,3.48,No,Team B
+T00258,2025-07-08 00:00:00,IoT,High,In Progress,17.25,No,Team C
+T00259,2025-07-08 12:00:00,Data,Low,In Progress,2.58,No,Team A
+T00260,2025-07-09 00:00:00,Network,High,Open,8.45,No,Team A
+T00261,2025-07-09 12:00:00,IoT,Low,Resolved,18.86,Yes,Team C
+T00262,2025-07-10 00:00:00,Platform,Low,Resolved,7.36,No,Team B
+T00263,2025-07-10 12:00:00,Network,Low,Open,26.47,Yes,Team A
+T00264,2025-07-11 00:00:00,Network,Low,In Progress,17.01,No,Team C
+T00265,2025-07-11 12:00:00,Platform,Low,Closed,9.21,No,Team A
+T00266,2025-07-12 00:00:00,Network,Medium,Resolved,20.84,Yes,Team C
+T00267,2025-07-12 12:00:00,Platform,Low,Resolved,9.8,No,Team C
+T00268,2025-07-13 00:00:00,IoT,Low,Resolved,18.15,Yes,Team C
+T00269,2025-07-13 12:00:00,IoT,Low,In Progress,6.47,No,Team B
+T00270,2025-07-14 00:00:00,Network,Low,Closed,21.64,Yes,Team A
+T00271,2025-07-14 12:00:00,Platform,High,Closed,6.83,No,Team C
+T00272,2025-07-15 00:00:00,Network,Critical,Closed,12.45,No,Team B
+T00273,2025-07-15 12:00:00,IoT,Low,In Progress,5.13,No,Team B
+T00274,2025-07-16 00:00:00,Platform,High,In Progress,11.03,No,Team A
+T00275,2025-07-16 12:00:00,Security,High,Open,18.06,Yes,Team B
+T00276,2025-07-17 00:00:00,Security,Critical,In Progress,19.15,Yes,Team B
+T00277,2025-07-17 12:00:00,Network,Low,In Progress,18.29,Yes,Team A
+T00278,2025-07-18 00:00:00,IoT,Low,Resolved,23.68,Yes,Team C
+T00279,2025-07-18 12:00:00,IoT,Medium,In Progress,2.53,No,Team A
+T00280,2025-07-19 00:00:00,Platform,High,Closed,29.54,Yes,Team C
+T00281,2025-07-19 12:00:00,IoT,High,Open,13.64,No,Team C
+T00282,2025-07-20 00:00:00,Network,Medium,Open,32.67,Yes,Team B
+T00283,2025-07-20 12:00:00,Data,Low,Closed,6.24,No,Team A
+T00284,2025-07-21 00:00:00,Network,High,Resolved,5.83,No,Team B
+T00285,2025-07-21 12:00:00,Platform,High,In Progress,21.14,Yes,Team B
+T00286,2025-07-22 00:00:00,Network,Medium,Resolved,16.43,No,Team B
+T00287,2025-07-22 12:00:00,Data,Medium,In Progress,4.55,No,Team A
+T00288,2025-07-23 00:00:00,Data,Medium,Open,4.96,No,Team B
+T00289,2025-07-23 12:00:00,Security,Medium,Resolved,19.2,Yes,Team A
+T00290,2025-07-24 00:00:00,Platform,Medium,In Progress,14.53,No,Team B
+T00291,2025-07-24 12:00:00,Security,High,Resolved,12.94,No,Team B
+T00292,2025-07-25 00:00:00,Data,Critical,In Progress,23.55,Yes,Team B
+T00293,2025-07-25 12:00:00,Network,Medium,Resolved,13.55,No,Team C
+T00294,2025-07-26 00:00:00,Data,Low,Closed,5.42,No,Team C
+T00295,2025-07-26 12:00:00,Platform,Medium,Open,20.15,Yes,Team C
+T00296,2025-07-27 00:00:00,Platform,Low,Open,17.65,No,Team C
+T00297,2025-07-27 12:00:00,Network,Low,Resolved,11.34,No,Team C
+T00298,2025-07-28 00:00:00,Data,Low,Closed,19.21,Yes,Team A
+T00299,2025-07-28 12:00:00,Platform,Medium,Resolved,35.27,Yes,Team A

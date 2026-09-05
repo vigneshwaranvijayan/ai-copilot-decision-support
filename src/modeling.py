@@ -7,7 +7,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier, RandomForestClassifier, ExtraTreesRegressor, GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, ExtraTreesRegressor, GradientBoostingRegressor, RandomForestRegressor
+from sklearn.neural_network import MLPClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge
 from sklearn.metrics import (
@@ -155,15 +156,15 @@ def get_candidate_models(include_xgboost: bool = True, random_state: int = 42) -
             random_state=random_state,
             n_jobs=-1,
         ),
-        "Extra Trees": ExtraTreesClassifier(
-            n_estimators=250,
-            max_depth=None,
-            min_samples_leaf=2,
-            class_weight="balanced",
-            random_state=random_state,
-            n_jobs=-1,
-        ),
         "Gradient Boosting": GradientBoostingClassifier(random_state=random_state),
+        "MLP Neural Network Baseline": MLPClassifier(
+            hidden_layer_sizes=(32, 16),
+            activation="relu",
+            max_iter=500,
+            random_state=random_state,
+            early_stopping=True,
+            validation_fraction=0.15,
+        ),
     }
     if include_xgboost and XGBOOST_AVAILABLE and XGBClassifier is not None:
         models["XGBoost"] = XGBClassifier(
@@ -251,7 +252,7 @@ def train_models(
     random_state: int = 42,
     max_training_rows: int = 120_000,
 ) -> TrainingOutput:
-    """Train all candidate models on the uploaded dataset and select the best."""
+    """Train the final four classification models on the uploaded dataset and select the best."""
     if target_column not in df.columns:
         raise KeyError(f"Target column not found: {target_column}")
     working = df.dropna(subset=[target_column]).copy()
