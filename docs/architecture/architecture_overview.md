@@ -30,7 +30,7 @@ Model Layer, when binary target exists
   - Random Forest
   - Extra Trees
   - Gradient Boosting
-  - Optional XGBoost
+  - Assessed four-model classification comparison: Logistic Regression, Random Forest, Gradient Boosting and MLP baseline
   - Best model selected by F1, Recall and ROC-AUC
         ↓
 Explainability Layer

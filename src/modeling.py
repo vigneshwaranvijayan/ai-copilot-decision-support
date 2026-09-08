@@ -145,7 +145,7 @@ def build_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
     )
 
 
-def get_candidate_models(include_xgboost: bool = True, random_state: int = 42) -> Dict[str, object]:
+def get_candidate_models(include_xgboost: bool = False, random_state: int = 42) -> Dict[str, object]:
     models: Dict[str, object] = {
         "Logistic Regression": LogisticRegression(max_iter=2000, class_weight="balanced", n_jobs=None),
         "Random Forest": RandomForestClassifier(
@@ -247,12 +247,18 @@ def train_models(
     df: pd.DataFrame,
     target_column: str,
     positive_label: Optional[object] = None,
-    include_xgboost: bool = True,
+    include_xgboost: bool = False,
     test_size: float = 0.2,
     random_state: int = 42,
     max_training_rows: int = 120_000,
 ) -> TrainingOutput:
-    """Train the final four classification models on the uploaded dataset and select the best."""
+    """Train the final four assessed classification models on the uploaded dataset and select the best.
+
+    The assessed dissertation workflow uses exactly four models by default:
+    Logistic Regression, Random Forest, Gradient Boosting, and MLP Neural
+    Network Baseline. XGBoost remains disabled unless explicitly enabled in
+    code for exploratory comparison outside the assessed workflow.
+    """
     if target_column not in df.columns:
         raise KeyError(f"Target column not found: {target_column}")
     working = df.dropna(subset=[target_column]).copy()
@@ -432,7 +438,7 @@ def detect_regression_targets(df: pd.DataFrame, max_unique_ratio: float = 0.05) 
     return [c for _, c in sorted(candidates, key=lambda x: (x[0], x[1]), reverse=True)]
 
 
-def get_candidate_regression_models(include_xgboost: bool = True, random_state: int = 42) -> Dict[str, object]:
+def get_candidate_regression_models(include_xgboost: bool = False, random_state: int = 42) -> Dict[str, object]:
     models: Dict[str, object] = {
         "Linear Regression": LinearRegression(),
         "Ridge Regression": Ridge(alpha=1.0, random_state=random_state),
@@ -487,7 +493,7 @@ def _sample_for_regression(df: pd.DataFrame, target: str, max_rows: int, random_
 def train_regression_models(
     df: pd.DataFrame,
     target_column: str,
-    include_xgboost: bool = True,
+    include_xgboost: bool = False,
     test_size: float = 0.2,
     random_state: int = 42,
     max_training_rows: int = 120_000,

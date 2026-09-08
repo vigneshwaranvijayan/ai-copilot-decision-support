@@ -1,1 +1,1 @@
-Sample datasets for customer churn, sales analytics, employee attrition and operations/service workflows. Main dissertation evaluation should focus on sample_churn.csv or a public Telco Customer Churn dataset.
+Sample datasets for customer churn, sales analytics and operations/service workflow testing. Main dissertation evaluation should focus on sample_churn.csv or a public Telco Customer Churn dataset.

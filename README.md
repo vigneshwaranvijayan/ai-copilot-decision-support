@@ -1,171 +1,95 @@
-# Final Working MSc Package - Explainable AI Copilot for Business Decision Support
+# Explainable AI Copilot for Business Decision Support
 
-This package is based on the last working v15.5 repository and keeps the complete UI, architecture diagrams, research notes, testing evidence, memory design, visual analytics and Copilot grounding files. It has been cleaned for final use by removing the `.git` folder and aligning the assessed classification workflow with the dissertation: Logistic Regression, Random Forest, Gradient Boosting and MLP Neural Network Baseline.
+Advanced supervisor-aligned working prototype for the CS5500 MSc dissertation.
 
-Current local test check: `pytest -q` passes after packaging.
+## Main project focus
 
-## Final dissertation scope
+The implemented proof-of-concept focuses on customer churn decision support and wider structured business dataset analysis. The system supports:
 
-- Main case study: customer churn decision support.
-- Supporting capability: other suitable structured datasets can be tested for data upload, validation, visualisation, modelling and Copilot answers.
-- Not included as a main case study: any specific external organisational case or employee-specific decision-making.
-- Main contribution: data analysis, visualisation, modelling, SHAP/fallback explanation, Copilot chat, evidence grounding, memory support, recommendation, safety warning and exportable results.
+- structured dataset upload and preview
+- data validation and PASS/WARNING/FAIL readiness checking
+- visual analytics and exploratory charts
+- four-model classification comparison
+- SHAP / feature-importance explanation
+- Copilot-style question answering using available evidence
+- typo-tolerant question interpretation for common spelling/grammar mistakes
+- recommendation, limitation and safety-warning outputs
+- short-term session memory
+- exportable evidence for dissertation reporting
+- optional document-memory upload with overlapping chunking
+- advanced retrieval design: metadata filtering, hybrid TF-IDF/BM25 search, reranking and retrieval metrics
+- architecture notes for future PostgreSQL + ChromaDB enterprise extension
 
----
+## Assessed four-model workflow
 
-# Dataset-Grounded AI Copilot v15.5 Remaining Reviewer Fix
+The classification workflow uses exactly these four models by default:
 
-v15.5 fixes remaining reviewer/demo questions found from the latest exported chat file: research-gap, ChromaDB, export/evidence, competitor-pricing safe refusal, and false FAIL grounding for relationship evidence.
+1. Logistic Regression
+2. Random Forest
+3. Gradient Boosting
+4. MLP Neural Network Baseline
 
-Test result: `pytest -q` -> 46 passed.
+XGBoost is not part of the final assessed workflow.
 
-# Dataset-Grounded AI Copilot v15.4 Presentation Mode Final
+## Advanced Copilot/memory additions
 
-This is the final presentation/reviewer-ready version. It keeps the v15.3 stability fixes and adds Reviewer Mode buttons, screenshot-ready chat display, auto explanation after modelling, and confidence labels in Copilot answers.
+This version adds a local retrieval pipeline for the document knowledge and long-term memory design:
 
-## v15.4 highlights
-- Reviewer Mode buttons for safe high-standard demo questions.
-- Screenshot mode toggle for shorter, professional Copilot answers.
-- Auto explanation after auto-modelling, so top-driver questions work without manual SHAP/fallback generation.
-- Every answer now shows answer grounding and confidence.
-- Safe refusal confidence for legal/unsupported questions.
-- Model evidence appears in Copilot answers when a trained model exists.
+1. **Better chunking with overlap**: uploaded text/PDF/DOCX/Markdown documents can be split into chunks while preserving surrounding context.
+2. **Metadata filtering**: chunks can be filtered by company, department, topic and document type before search.
+3. **Hybrid search**: TF-IDF semantic-style search and BM25 keyword search run in parallel and combine scores.
+4. **Reranking**: candidate chunks are reranked using a transparent relevance score before being passed to the Copilot evidence stage.
+5. **Retrieval evaluation**: precision@k, recall@k, MRR and nDCG@k are available for document-retrieval testing.
 
-## Correct project claim
-This is a controlled dataset-grounded AI Copilot. It is not a perfect general chatbot. It aims to be reliable for supported operational decision-support questions and safe for unsupported questions using readiness checks, evidence grounding, model/explanation artefacts, memory, confidence labels, refusal logic and audit logs.
+These features are useful for Chapter 3 memory architecture and Chapter 6 future enterprise extension. The main evaluated case study remains customer churn.
 
+## Supervisor feedback coverage
 
+| Supervisor point | Included in project |
+|---|---|
+| Data integration | Upload, URL/API, Google Drive shared link and PostgreSQL connector modules |
+| Readiness validation | PASS/WARNING/FAIL gates with measurable criteria |
+| Analytics | EDA and visual analytics pages |
+| Explainability | SHAP and fallback feature-importance support |
+| Copilot answer generation | Evidence-grounded Copilot module |
+| Evaluation | Model metrics, Copilot answer review, user questionnaire template, software tests and retrieval metrics |
+| Research contribution | Dedicated research contribution page and notes |
+| Measurable readiness criteria | Readiness criteria table and validation module |
+| Model performance metrics | Accuracy, precision, recall, F1-score, ROC-AUC and confusion matrix |
+| Explanation quality | SHAP driver outputs and explanation summaries |
+| Trust/usability | Evaluation questionnaire and metrics table |
+| Grounding accuracy | Evidence-package and answer-grounding checks |
+| Short-term memory | Session memory stores active dataset, target, model, question and answer context |
+| Long-term memory architecture | ChromaDB/vector-memory design and PostgreSQL structured-storage design |
+| Advanced retrieval | Chunking, metadata filtering, hybrid search, reranking and retrieval metrics |
+| MongoDB reconsidered | MongoDB removed from core design; PostgreSQL + ChromaDB used in architecture |
 
-# Dataset-Grounded AI Copilot v15.3 Reviewer-Stability Edition
+## Run locally
 
-This version patches the reviewer challenge issues found in the uploaded chat export.
+```powershell
+cd C:\Users\Vignesh\Downloads\ai_copilot_decision_support_advanced_v1
 
-## v15.3 fixes
-- Target relationship questions now compare requested columns against churn instead of returning only the overall churn rate.
-- Example fixed: `How does tenure relate to churn?`
-- Example fixed: `Which payment method is linked with higher churn?`
-- Driver questions are prioritised before generic model-performance answers.
-- Retention priority/action questions now use churn segment, feedback and model evidence where available.
-- System/research questions now have controlled answers:
-  - short-term memory
-  - MongoDB removal / ChromaDB design
-  - audit trail and answer logging
-  - graph grounding
-  - dataset RAM/memory use
-- Legal-advice questions are explicitly refused with a safety warning.
-- Prediction-evidence questions now show target, model metrics and explanation status.
-- Tests increased to 40 passed.
+py -3.13 -m venv .venv
+.\.venv\Scripts\activate
 
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
 
-
-# Dataset-Grounded AI Copilot v15.2 Final UI and Model-Grounded Edition
-
-This version includes the final UI/navigation improvements and makes the role of modelling visible in Copilot answers.
-
-## v15.2 highlights
-- Modern top bar: AI Solution brand, dummy account, dark mode toggle and export button.
-- Sidebar button navigation for Upload, Dashboard, Model, Graphs, Business, Chat, Evaluation, Export and Research.
-- Central Upload Data page for local files, URL/API, Google Drive and PostgreSQL.
-- Copilot answers now include answer-grounding status and model/prediction evidence when available.
-- Model results are used for model-performance questions, top-driver questions, prediction/explanation questions and decision-support suitability.
-- Dataset-only questions still use EDA/statistical evidence.
-- ChromaDB remains the semantic memory layer; PostgreSQL remains the structured data layer.
-
-
-
-# Dataset-Grounded AI Copilot for Operational Decision Support - v15.1 Reviewer-Ready Edition
-
-This repository contains the final research-ready proof-of-concept prototype for an Explainable AI Copilot that supports operational business decision-making from integrated datasets.
-
-## Main research contribution
-
-The contribution is not just a dashboard. The final system demonstrates a dataset-grounded Explainable AI Copilot framework with five linked contributions:
-
-1. **Measurable PASS/WARNING/FAIL readiness framework** before analysis, modelling or answer generation.
-2. **Evidence-grounding mechanism** that packages source, columns, statistics, model metrics, explanations and limitations before answering.
-3. **Explainability-to-action pipeline** that translates model drivers into business recommendations and safety warnings.
-4. **Memory-supported Copilot architecture** with short-term session memory and ChromaDB long-term semantic memory.
-5. **Evaluation framework** covering model performance, explanation quality, grounding accuracy, trust, usability and decision support.
-
-## What changed from the previous implementation
-
-| Area | Previous work | v15 final change |
-|---|---|---|
-| Data ingestion | Local upload, URL/API, Google Drive and database-ready ideas | Kept and documented as an integrated data-source layer |
-| MongoDB | Considered for unstructured/chat storage | Removed from the core architecture |
-| ChromaDB | Not central | Added as the semantic long-term memory layer for retrieved evidence |
-| Readiness | General data quality score | Added measurable PASS/WARNING/FAIL thresholds |
-| Copilot | Dataset-grounded response format | Added evidence package, answer readiness and memory retrieval |
-| Evaluation | Prediction-only vs explanation-supported evaluation | Extended with model, explanation, grounding, trust, usability and performance metrics |
-| UI | Modern dashboard and button navigation | Kept and aligned to final research flow |
-| Copilot routing | Some ambiguous questions could map to the wrong column | Added safer intent priority, ID-column blocking, technical-issue routing and dataset-use-case answers |
-| Case study | Customer churn primary case study | Kept as the main proof-of-concept; other datasets are robustness tests |
-
-## Data sources supported
-
-- Local upload: CSV, TSV, Excel, JSON and ZIP.
-- Public URL/API: CSV, JSON and Excel links.
-- Google Drive / Google Sheets shared links.
-- PostgreSQL structured data connector.
-- ChromaDB semantic memory for summaries, explanations, Copilot answers and generated insights.
-
-## Primary case study
-
-The main evaluated proof-of-concept is **customer churn decision support**. The workflow is:
-
-`data integration -> readiness gates -> EDA -> classification model -> SHAP/fallback explanation -> Copilot answer -> business recommendation -> safety warning -> evaluation/export evidence`
-
-Additional datasets such as bank marketing, online retail/sales and customer feedback are used only for robustness and integration evidence.
-
-## Models used
-
-Classification models used in the assessed workflow:
-
-- Logistic Regression
-- Random Forest
-- Gradient Boosting
-- MLP Neural Network Baseline
-
-Regression is optional for numeric business targets:
-
-- Linear Regression
-- Random Forest Regressor
-- Extra Trees Regressor
-- Gradient Boosting Regressor
-- Optional XGBoost Regressor
-
-Model evidence includes accuracy, precision, recall, F1-score, ROC-AUC, confusion matrix and training-row count.
-
-## How to run
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
-Or on Windows, double-click:
+Use `python -m streamlit run app.py` rather than only `streamlit run app.py` on Windows.
 
-```text
-run_app.bat
+## Test
+
+```powershell
+python -m pytest -q
 ```
 
-## Final project report and diagrams
+The package was checked after the advanced update: **50 tests passed**.
 
-- `docs/proposal/Dataset_Grounded_AI_Copilot_Final_Project_Report_v15.pdf`
-- `docs/architecture/v15_figures/`
-- `docs/research/v15_research_contribution_and_changes.md`
-- `docs/testing/final_test_results_v15.txt`
-- `docs/testing/final_test_results_v15_1.txt`
+## Dissertation wording
 
-## Safety boundary
+In the abstract, keep the description simple: "data validation and readiness checks". In methodology and implementation, explain the measurable PASS/WARNING/FAIL readiness framework because this was specifically requested in supervisor feedback.
 
-The app is decision support only. It must not make automatic business, HR, legal or customer decisions. If evidence is missing, the Copilot should refuse or warn rather than inventing an unsupported answer.
-
-
-## v15.1 reviewer-ready reliability fixes
-
-Manual testing showed that some unclear questions could be routed incorrectly. For example, technical-issue questions could accidentally produce customer ID frequency tables, and dataset-use questions could be treated as feedback value counts. v15.1 fixes these problems using safer intent priority, required-evidence checks, ID-column blocking and feedback/theme routing.
-
-The project should be presented as a proof-of-concept that aims for reliable answers inside supported scope, not as an always-correct general chatbot. Unsupported or low-confidence questions should return clarification, limitation or refusal instead of unsupported claims.
+Do not claim the advanced document retrieval pipeline is the main evaluated contribution unless you fully evaluate it. Position it as an implemented supporting feature and future enterprise memory direction.

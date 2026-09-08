@@ -57,6 +57,14 @@ from src.evaluation_framework import evaluation_metrics_table
 from src.evidence_package import build_evidence_package, evidence_package_to_text
 from src.memory_manager import update_short_term_memory, short_term_memory_table, memory_architecture_table
 from src.vector_memory import add_memory_document, query_memory, memory_backend_status
+from src.document_retrieval import (
+    extract_text_from_bytes,
+    chunk_text,
+    chunks_to_dataframe,
+    hybrid_search,
+    evaluate_retrieval,
+    retrieval_pipeline_description,
+)
 
 st.set_page_config(
     page_title="Dataset-Grounded AI Copilot",
@@ -253,7 +261,7 @@ def render_upload_page() -> None:
 """,
         unsafe_allow_html=True,
     )
-    up_tab, url_tab, drive_tab, pg_tab = st.tabs(["Local files", "URL / API", "Google Drive", "PostgreSQL"])
+    up_tab, url_tab, drive_tab, pg_tab, doc_tab = st.tabs(["Local files", "URL / API", "Google Drive", "PostgreSQL", "Document memory"])
     with up_tab:
         st.markdown("#### Local upload")
         uploads_main = st.file_uploader(
@@ -321,6 +329,61 @@ def render_upload_page() -> None:
                 st.rerun()
             except Exception as exc:
                 st.error(f"PostgreSQL load failed: {exc}")
+    with doc_tab:
+        st.markdown("#### Document memory upload")
+        st.caption("Optional advanced retrieval feature for reports, notes and dissertation evidence. This is separate from the main customer churn dataset workflow.")
+        docs = st.file_uploader(
+            "Upload documents for retrieval memory",
+            type=["txt", "md", "pdf", "docx", "csv", "json"],
+            accept_multiple_files=True,
+            key="document_memory_files",
+        )
+        dcol1, dcol2, dcol3 = st.columns(3)
+        with dcol1:
+            doc_company = st.text_input("Company / organisation metadata", value="demo", key="doc_company_meta")
+        with dcol2:
+            doc_department = st.text_input("Department metadata", value="general", key="doc_department_meta")
+        with dcol3:
+            doc_topic = st.text_input("Topic metadata", value="decision-support", key="doc_topic_meta")
+        c1, c2 = st.columns(2)
+        with c1:
+            chunk_size = st.number_input("Chunk size (words)", min_value=200, max_value=1200, value=700, step=50, key="doc_chunk_size")
+        with c2:
+            overlap_size = st.number_input("Overlap (words)", min_value=20, max_value=300, value=120, step=10, key="doc_overlap_size")
+        if st.button("Add documents to retrieval memory", key="add_docs_memory", use_container_width=True):
+            added_chunks = []
+            for doc in docs or []:
+                try:
+                    raw = doc.getvalue()
+                    text = extract_text_from_bytes(doc.name, raw)
+                    chunks = chunk_text(
+                        text,
+                        document_name=doc.name,
+                        chunk_words=int(chunk_size),
+                        overlap_words=int(overlap_size),
+                        base_metadata={
+                            "company": doc_company,
+                            "department": doc_department,
+                            "topic": doc_topic,
+                            "document_type": Path(doc.name).suffix.lower().replace(".", "") or "text",
+                        },
+                    )
+                    st.session_state.document_chunks.extend(chunks)
+                    for ch in chunks:
+                        try:
+                            mem_id = add_memory_document(ch.text, metadata={**ch.metadata, "type": "document_chunk"})
+                            st.session_state.semantic_memory_events.append({"dataset": st.session_state.active_dataset, "type": "document_chunk", "memory_id": mem_id, "document": doc.name, "chunk_no": ch.metadata.get("chunk_no")})
+                        except Exception:
+                            pass
+                    added_chunks.extend(chunks)
+                except Exception as exc:
+                    st.error(f"Could not process {getattr(doc, 'name', 'document')}: {exc}")
+            if added_chunks:
+                st.success(f"Added {len(added_chunks)} overlapping document chunks to session memory.")
+                st.dataframe(chunks_to_dataframe(added_chunks).drop(columns=["text"], errors="ignore"), use_container_width=True, hide_index=True)
+        if st.session_state.get("document_chunks"):
+            st.markdown("##### Current document chunks")
+            st.dataframe(chunks_to_dataframe(st.session_state.document_chunks).drop(columns=["text"], errors="ignore"), use_container_width=True, hide_index=True)
 
     if st.session_state.cleaned:
         st.markdown("### Loaded datasets")
@@ -358,6 +421,7 @@ def init_state():
         "session_memory": {},
         "semantic_memory_events": [],
         "semantic_memory_enabled": True,
+        "document_chunks": [],
         "auto_model_enabled": True,
         "current_page": "Upload Data",
     }
@@ -929,12 +993,13 @@ if current_page == "Modeling & Prediction Explanation":
                 possible_values = list(df[target_col].dropna().unique()) if target_col in df.columns else []
                 default_pos = infer_positive_label(df[target_col]) if target_col in df.columns and df[target_col].nunique(dropna=True) == 2 else (possible_values[0] if possible_values else None)
                 positive_value = st.selectbox("Positive class", possible_values, index=possible_values.index(default_pos) if default_pos in possible_values else 0, key="model_pos") if possible_values else None
-            inc_xgb = st.checkbox("Try optional XGBoost if installed", value=XGBOOST_AVAILABLE, help="The app continues normally if XGBoost is not installed or fails.", key="cls_xgb")
+            st.caption("Assessed workflow: Logistic Regression, Random Forest, Gradient Boosting and MLP Neural Network Baseline.")
+            inc_xgb = False
             max_rows = st.slider("Maximum rows for classification training", min_value=5000, max_value=200000, value=min(max(len(df), 5000), 120000), step=5000, help="Large datasets may be sampled for model training to keep the interface responsive.", key="cls_rows")
             if st.button("Train and compare classification models", type="primary", use_container_width=True):
                 try:
                     with st.spinner("Training classification models and selecting the best model..."):
-                        output = train_models(df, target_col, positive_value, include_xgboost=inc_xgb, max_training_rows=max_rows)
+                        output = train_models(df, target_col, positive_value, include_xgboost=False, max_training_rows=max_rows)
                         st.session_state.model_outputs[name] = output
                         st.session_state.explanations.pop(name, None)
                     st.success(f"Training complete. Best model: {output.best_result.model_name}")
@@ -978,12 +1043,13 @@ if current_page == "Modeling & Prediction Explanation":
         regression_candidates = detect_regression_targets(df)
         if regression_candidates:
             reg_target = st.selectbox("Select numeric target", regression_candidates + [c for c in df.select_dtypes(include=np.number).columns if c not in regression_candidates], key="reg_target")
-            inc_xgb_reg = st.checkbox("Try optional XGBoost Regressor if installed", value=XGBOOST_AVAILABLE, key="reg_xgb")
+            st.caption("Optional regression mode uses scikit-learn baseline models only and is not part of the main assessed churn workflow.")
+            inc_xgb_reg = False
             max_rows_reg = st.slider("Maximum rows for regression training", min_value=5000, max_value=200000, value=min(max(len(df), 5000), 120000), step=5000, key="reg_rows")
             if st.button("Train and compare regression models", use_container_width=True):
                 try:
                     with st.spinner("Training regression models..."):
-                        reg_output = train_regression_models(df, reg_target, include_xgboost=inc_xgb_reg, max_training_rows=max_rows_reg)
+                        reg_output = train_regression_models(df, reg_target, include_xgboost=False, max_training_rows=max_rows_reg)
                         st.session_state.regression_outputs[name] = reg_output
                     st.success(f"Regression training complete. Best model: {reg_output.best_result.model_name}")
                     st.rerun()
@@ -1422,6 +1488,44 @@ if current_page == "Research & Memory":
     if not semantic_events.empty:
         st.markdown("#### Semantic memory events recorded this session")
         st.dataframe(semantic_events, use_container_width=True, hide_index=True)
+
+    st.markdown("#### Advanced document retrieval pipeline")
+    st.caption("This section demonstrates the future long-term memory design: overlapping chunking, metadata filtering, hybrid TF-IDF/BM25 search, reranking and retrieval metrics.")
+    st.dataframe(retrieval_pipeline_description(), use_container_width=True, hide_index=True)
+    if st.session_state.get("document_chunks"):
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            q_doc = st.text_input("Document retrieval query", placeholder="e.g. model evaluation metrics", key="research_doc_query")
+        with r2:
+            department_filter = st.text_input("Filter: department", key="research_doc_department_filter")
+        with r3:
+            topic_filter = st.text_input("Filter: topic", key="research_doc_topic_filter")
+        c1, c2 = st.columns(2)
+        with c1:
+            candidate_limit = st.slider("Candidate chunks before reranking", min_value=10, max_value=100, value=50, step=10, key="research_candidate_limit")
+        with c2:
+            top_k = st.slider("Top chunks after reranking", min_value=3, max_value=10, value=5, step=1, key="research_top_k")
+        if st.button("Run hybrid retrieval + reranking", use_container_width=True):
+            results = hybrid_search(
+                q_doc or "decision support",
+                st.session_state.document_chunks,
+                metadata_filters={"department": department_filter, "topic": topic_filter},
+                candidate_limit=int(candidate_limit),
+                top_k=int(top_k),
+            )
+            if results.empty:
+                st.info("No matching document chunks were found after metadata filtering.")
+            else:
+                st.dataframe(results, use_container_width=True, hide_index=True)
+                st.download_button("Download retrieval results CSV", results.to_csv(index=False), file_name="retrieval_results.csv", mime="text/csv", use_container_width=True)
+                retrieved_ids = results["chunk_id"].astype(str).tolist()
+                relevant_text = st.text_input("Optional evaluation: relevant chunk IDs separated by comma", key="relevant_chunk_ids")
+                if relevant_text.strip():
+                    relevant_ids = [x.strip() for x in relevant_text.split(",") if x.strip()]
+                    metrics = evaluate_retrieval(retrieved_ids, relevant_ids, k=min(int(top_k), len(retrieved_ids)))
+                    st.json(metrics)
+    else:
+        st.info("Upload documents from the Upload Data → Document memory tab to test hybrid retrieval.")
 
     st.markdown("#### Evaluation framework metrics")
     st.dataframe(evaluation_metrics_table(), use_container_width=True, hide_index=True)
