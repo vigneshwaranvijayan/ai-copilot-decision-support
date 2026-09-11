@@ -1,14 +1,51 @@
+# Python cache / build
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments / local configuration
 .venv/
 venv/
 .env
-.DS_Store
+.env.*
 .streamlit/secrets.toml
-.pytest_cache/
-.ipynb_checkpoints/
 
-# Do not commit full/raw datasets or model binaries by default
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Runtime-generated local persistence
+audit_store.db
+*.db-journal
+.copilot_memory/
+
+# Generated exports / reports
+*_full_results_package*.zip
+*_cleaned.csv
+*_cleaning_report.csv
+*_readiness_gates.csv
+*_top_explanation_drivers.csv
+*_local_prediction_explanation_drivers.csv
+*_session_audit_log.csv
+*_runtime_process_evidence.csv
+*_runtime_summary.csv
+*_copilot_chat_answers.csv
+*_copilot_evaluation_summary.csv
+*_memory_allocation_evidence.csv
+*_semantic_memory_events.csv
+sqlite_audit_events.csv
+evaluation_responses.csv
+retrieval_results.csv
+scale_evidence.csv
+
+# Large/raw data and trained artefacts should not be committed by default
 data_raw/
 *.zip
 *.xlsx

@@ -13,7 +13,8 @@ def test_v15_readiness_report_pass_for_clean_dataset():
     report = build_readiness_report(df, dataset_name="tiny", target_column="churn")
     assert report.rows == 6
     assert report.quality_score >= 80
-    assert any(g.gate == "Model target readiness" and g.status == PASS for g in report.gates)
+    assert any(g.gate == "Target column" and g.status == PASS for g in report.gates)
+    assert any(g.gate == "Target validity" and g.status == PASS for g in report.gates)
 
 
 def test_v15_answer_readiness_fail_when_required_column_missing():

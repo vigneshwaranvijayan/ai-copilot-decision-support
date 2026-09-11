@@ -1,95 +1,79 @@
-# Explainable AI Copilot for Business Decision Support
+# Explainable AI Copilot for Operational Business Decision Support
 
-Advanced supervisor-aligned working prototype for the CS5500 MSc dissertation.
+Proof-of-concept Streamlit application developed for the MSc dissertation **Design and Evaluation of a Proof-of-Concept Explainable AI Copilot for Operational Business Decision Support**.
 
-## Main project focus
+## Core capabilities
 
-The implemented proof-of-concept focuses on customer churn decision support and wider structured business dataset analysis. The system supports:
+- structured dataset upload and data-readiness assessment
+- descriptive Business Intelligence-style analytics
+- comparison of Logistic Regression, Random Forest, Gradient Boosting and MLP classifiers
+- global and local SHAP explanations
+- evidence-grounded conversational Copilot
+- short-term session context and safe-refusal / limitation handling
+- runtime, memory, audit and results export evidence
+- structured 100-question Copilot evaluation
 
-- structured dataset upload and preview
-- data validation and PASS/WARNING/FAIL readiness checking
-- visual analytics and exploratory charts
-- four-model classification comparison
-- SHAP / feature-importance explanation
-- Copilot-style question answering using available evidence
-- typo-tolerant question interpretation for common spelling/grammar mistakes
-- recommendation, limitation and safety-warning outputs
-- short-term session memory
-- exportable evidence for dissertation reporting
-- optional document-memory upload with overlapping chunking
-- advanced retrieval design: metadata filtering, hybrid TF-IDF/BM25 search, reranking and retrieval metrics
-- architecture notes for future PostgreSQL + ChromaDB enterprise extension
+## Repository contents
 
-## Assessed four-model workflow
+```text
+app.py                 Streamlit application
+src/                   application modules
+tests/                 automated regression tests
+evaluation/            100-question instrument and questionnaire template
+data_samples/          small sample churn dataset for quick testing
+requirements.txt       core runtime dependencies
+requirements_dev.txt   test dependency
+requirements_optional.txt optional/future architecture dependencies
+TEST_RESULTS.txt       packaged final regression-test summary
+```
 
-The classification workflow uses exactly these four models by default:
-
-1. Logistic Regression
-2. Random Forest
-3. Gradient Boosting
-4. MLP Neural Network Baseline
-
-XGBoost is not part of the final assessed workflow.
-
-## Advanced Copilot/memory additions
-
-This version adds a local retrieval pipeline for the document knowledge and long-term memory design:
-
-1. **Better chunking with overlap**: uploaded text/PDF/DOCX/Markdown documents can be split into chunks while preserving surrounding context.
-2. **Metadata filtering**: chunks can be filtered by company, department, topic and document type before search.
-3. **Hybrid search**: TF-IDF semantic-style search and BM25 keyword search run in parallel and combine scores.
-4. **Reranking**: candidate chunks are reranked using a transparent relevance score before being passed to the Copilot evidence stage.
-5. **Retrieval evaluation**: precision@k, recall@k, MRR and nDCG@k are available for document-retrieval testing.
-
-These features are useful for Chapter 3 memory architecture and Chapter 6 future enterprise extension. The main evaluated case study remains customer churn.
-
-## Supervisor feedback coverage
-
-| Supervisor point | Included in project |
-|---|---|
-| Data integration | Upload, URL/API, Google Drive shared link and PostgreSQL connector modules |
-| Readiness validation | PASS/WARNING/FAIL gates with measurable criteria |
-| Analytics | EDA and visual analytics pages |
-| Explainability | SHAP and fallback feature-importance support |
-| Copilot answer generation | Evidence-grounded Copilot module |
-| Evaluation | Model metrics, Copilot answer review, user questionnaire template, software tests and retrieval metrics |
-| Research contribution | Dedicated research contribution page and notes |
-| Measurable readiness criteria | Readiness criteria table and validation module |
-| Model performance metrics | Accuracy, precision, recall, F1-score, ROC-AUC and confusion matrix |
-| Explanation quality | SHAP driver outputs and explanation summaries |
-| Trust/usability | Evaluation questionnaire and metrics table |
-| Grounding accuracy | Evidence-package and answer-grounding checks |
-| Short-term memory | Session memory stores active dataset, target, model, question and answer context |
-| Long-term memory architecture | ChromaDB/vector-memory design and PostgreSQL structured-storage design |
-| Advanced retrieval | Chunking, metadata filtering, hybrid search, reranking and retrieval metrics |
-| MongoDB reconsidered | MongoDB removed from core design; PostgreSQL + ChromaDB used in architecture |
+The repository intentionally excludes generated runtime files, exported result packages, local databases, caches, virtual environments and historical development notes. These are created locally when required and are covered by `.gitignore`.
 
 ## Run locally
 
+### Windows quick start
+
+Double-click `run_app.bat`, or run:
+
 ```powershell
-cd C:\Users\Vignesh\Downloads\ai_copilot_decision_support_advanced_v1
-
-py -3.13 -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\activate
-
-python -m pip install --upgrade pip setuptools wheel
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-
 python -m streamlit run app.py
 ```
 
-Use `python -m streamlit run app.py` rather than only `streamlit run app.py` on Windows.
+### macOS / Linux
 
-## Test
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
 
-```powershell
+Upload a structured CSV dataset in the application. A small sample file is provided at `data_samples/sample_churn.csv` for a quick functional check.
+
+## Run automated tests
+
+Install the development dependency and run:
+
+```bash
+python -m pip install -r requirements_dev.txt
 python -m pytest -q
 ```
 
-The package was checked after the advanced update: **50 tests passed**.
+The final verified code version completes **86 / 86 automated tests**.
 
-## Dissertation wording
+## Optional dependencies
 
-In the abstract, keep the description simple: "data validation and readiness checks". In methodology and implementation, explain the measurable PASS/WARNING/FAIL readiness framework because this was specifically requested in supervisor feedback.
+The assessed dissertation workflow uses the core dependencies only. Optional/future document-retrieval and enterprise-architecture packages are listed in `requirements_optional.txt` and are not required to run the core evaluated workflow.
 
-Do not claim the advanced document retrieval pipeline is the main evaluated contribution unless you fully evaluate it. Position it as an implemented supporting feature and future enterprise memory direction.
+## Runtime-generated files
+
+The application may create local runtime artefacts such as `audit_store.db` and `.copilot_memory/`. Exported CSV/ZIP result packages are generated through the application when requested. These files are intentionally not stored in the GitHub repository.
+
+## Research scope
+
+The evaluated contribution is an integrated, evidence-controlled workflow combining readiness, descriptive analytics, prediction, explanation, conversational grounding, responsible refusal, traceability and export. The project does not claim a state-of-the-art churn model or autonomous business decision making.

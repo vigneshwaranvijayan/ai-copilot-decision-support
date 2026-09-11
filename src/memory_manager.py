@@ -1,7 +1,13 @@
-"""Short-term and long-term memory helpers for the AI Copilot architecture."""
+"""Memory helpers for the dissertation prototype.
+
+Short-term session memory is the implemented and evaluated memory mechanism.
+Long-term structured/semantic memory components are retained only as optional
+future/experimental architecture demonstrations and are disabled by default in
+the assessed workflow.
+"""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 import pandas as pd
 
 
@@ -32,8 +38,32 @@ def short_term_memory_table(memory: Dict[str, Any], dataset: Optional[str] = Non
 
 def memory_architecture_table() -> pd.DataFrame:
     return pd.DataFrame([
-        {"memory_type": "Short-term session memory", "implementation": "Application session state", "stores": "Active dataset, selected target, last question, last answer, last topic/column context, chat history", "purpose": "Supports follow-up questions such as 'why?', 'show that as a graph', or 'same again' during one session."},
-        {"memory_type": "Structured long-term memory", "implementation": "PostgreSQL in scalable design; SQLite fallback in prototype", "stores": "Dataset metadata, readiness gates, model runs, metrics, predictions, audit events", "purpose": "Keeps reproducible structured evidence and supports reporting/audit."},
-        {"memory_type": "Semantic long-term memory", "implementation": "ChromaDB vector database; JSONL fallback if package unavailable", "stores": "Dataset summaries, readiness reports, Copilot answers, explanations, generated insights and report snippets", "purpose": "Retrieves relevant previous evidence before answering and justifies grounded Copilot behaviour."},
-        {"memory_type": "Not used in revised core design", "implementation": "MongoDB removed", "stores": "N/A", "purpose": "Supervisor feedback indicated ChromaDB is a better fit for retrieval-based AI memory than MongoDB in this architecture."},
+        {
+            "memory_type": "Implemented short-term session memory",
+            "implementation": "Streamlit/application session state",
+            "status_in_dissertation": "IMPLEMENTED + EVALUATED",
+            "stores": "Active dataset, selected target/model, last question/answer, last topic/column context, chat history",
+            "purpose": "Supports coherent follow-up questions during the current analysis session.",
+        },
+        {
+            "memory_type": "Future structured long-term memory",
+            "implementation": "PostgreSQL design (SQLite audit helper may be used locally)",
+            "status_in_dissertation": "FUTURE / OPTIONAL",
+            "stores": "Dataset metadata, model runs, metrics, exports, users and audit records",
+            "purpose": "Proposed scalable structured evidence store; not required for the assessed churn workflow.",
+        },
+        {
+            "memory_type": "Future semantic long-term memory",
+            "implementation": "ChromaDB / vector-store design with local JSONL experimental fallback",
+            "status_in_dissertation": "FUTURE / OPTIONAL — disabled by default",
+            "stores": "Report summaries, explanations, document chunks and prior evidence",
+            "purpose": "Demonstrates a possible future retrieval-supported architecture; it is not claimed as the core evaluated memory mechanism.",
+        },
+        {
+            "memory_type": "Future retrieval pipeline",
+            "implementation": "Chunking + metadata filtering + hybrid search + reranking",
+            "status_in_dissertation": "FUTURE / OPTIONAL",
+            "stores": "N/A",
+            "purpose": "Architecture demonstration for later enterprise extension, not part of the main churn experiment.",
+        },
     ])

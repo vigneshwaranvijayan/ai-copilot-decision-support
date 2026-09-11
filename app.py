@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import traceback
+import time
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -46,8 +47,9 @@ from src.modeling import (
     train_models,
     train_regression_models,
     XGBOOST_AVAILABLE,
+    infer_clear_binary_target,
 )
-from src.report import make_markdown_report
+from src.report import make_markdown_report, build_results_export_package
 from src.visual_analytics import build_visual_dashboard
 from src.validation import build_readiness_report, status_badge_html
 from src.persistence import record_audit_event, read_audit_events
@@ -65,6 +67,16 @@ from src.document_retrieval import (
     evaluate_retrieval,
     retrieval_pipeline_description,
 )
+from src.performance_monitor import (
+    performance_start,
+    process_rss_mb,
+    process_peak_rss_mb,
+    utc_timestamp,
+    build_runtime_summary,
+    build_memory_allocation_evidence,
+    build_copilot_evaluation_summary,
+)
+from src.question_batch import split_reviewer_questions
 
 st.set_page_config(
     page_title="Dataset-Grounded AI Copilot",
@@ -239,13 +251,13 @@ def render_ai_topbar(active_name: str | None = None, df: pd.DataFrame | None = N
         st.session_state.ui_dark_mode = st.toggle("Dark", value=st.session_state.get("ui_dark_mode", False), key="global_dark_toggle")
     with top_export:
         if active_name and df is not None:
-            st.download_button(
+            if st.button(
                 "Export",
-                f"# Quick export\nDataset: {active_name}\nRows: {len(df)}\nColumns: {df.shape[1]}\n",
-                file_name=f"{active_name}_quick_export.md",
-                mime="text/markdown",
+                key="topbar_go_export",
                 use_container_width=True,
-            )
+            ):
+                st.session_state.current_page = "Export Data"
+                st.rerun()
         else:
             st.button("Export", disabled=True, use_container_width=True)
 
@@ -330,8 +342,8 @@ def render_upload_page() -> None:
             except Exception as exc:
                 st.error(f"PostgreSQL load failed: {exc}")
     with doc_tab:
-        st.markdown("#### Document memory upload")
-        st.caption("Optional advanced retrieval feature for reports, notes and dissertation evidence. This is separate from the main customer churn dataset workflow.")
+        st.markdown("#### Future/optional document retrieval demonstration")
+        st.caption("Future architecture demonstration only. It is separate from the main assessed churn workflow and does not write long-term semantic memory unless the experimental semantic-memory option is enabled.")
         docs = st.file_uploader(
             "Upload documents for retrieval memory",
             type=["txt", "md", "pdf", "docx", "csv", "json"],
@@ -369,12 +381,13 @@ def render_upload_page() -> None:
                         },
                     )
                     st.session_state.document_chunks.extend(chunks)
-                    for ch in chunks:
-                        try:
-                            mem_id = add_memory_document(ch.text, metadata={**ch.metadata, "type": "document_chunk"})
-                            st.session_state.semantic_memory_events.append({"dataset": st.session_state.active_dataset, "type": "document_chunk", "memory_id": mem_id, "document": doc.name, "chunk_no": ch.metadata.get("chunk_no")})
-                        except Exception:
-                            pass
+                    if st.session_state.get("semantic_memory_enabled", False):
+                        for ch in chunks:
+                            try:
+                                mem_id = add_memory_document(ch.text, metadata={**ch.metadata, "type": "document_chunk"})
+                                st.session_state.semantic_memory_events.append({"dataset": st.session_state.active_dataset, "type": "document_chunk", "memory_id": mem_id, "document": doc.name, "chunk_no": ch.metadata.get("chunk_no")})
+                            except Exception:
+                                pass
                     added_chunks.extend(chunks)
                 except Exception as exc:
                     st.error(f"Could not process {getattr(doc, 'name', 'document')}: {exc}")
@@ -420,17 +433,48 @@ def init_state():
         "audit_events_session": [],
         "session_memory": {},
         "semantic_memory_events": [],
-        "semantic_memory_enabled": True,
+        "semantic_memory_enabled": False,
         "document_chunks": [],
         "auto_model_enabled": True,
+        "readiness_target_columns": {},
         "current_page": "Upload Data",
+        "performance_events": [],
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
 
+def record_performance_event(step: str, start_time, *, status: str = "PASS", details: dict | None = None) -> None:
+    """Store runtime/process evidence for Chapter 5 and export."""
+    if isinstance(start_time, dict):
+        start_perf = float(start_time.get("start_perf", time.perf_counter()))
+        start_rss = start_time.get("start_rss_mb")
+    else:
+        start_perf = float(start_time)
+        start_rss = None
+    elapsed = round(time.perf_counter() - start_perf, 3)
+    end_rss = process_rss_mb()
+    try:
+        delta_rss = round(float(end_rss) - float(start_rss), 3) if start_rss is not None else None
+    except Exception:
+        delta_rss = None
+    st.session_state.performance_events.append({
+        "dataset": st.session_state.get("active_dataset"),
+        "step": step,
+        "status": status,
+        "elapsed_seconds": elapsed,
+        "recorded_at_utc": utc_timestamp(),
+        "process_rss_start_mb": start_rss,
+        "process_rss_end_mb": end_rss,
+        "process_rss_delta_mb": delta_rss,
+        "process_peak_rss_mb": process_peak_rss_mb(),
+        "details": details or {},
+    })
+
+
 def add_dataset(ds: LoadedDataset):
+    perf_start = performance_start()
     if ds.dataframe is None or ds.dataframe.empty:
         st.warning(f"Could not load `{ds.name}`. {ds.notes}")
         return
@@ -449,14 +493,20 @@ def add_dataset(ds: LoadedDataset):
         "notes": getattr(ds, "notes", ""),
         "original_name": getattr(ds, "name", name),
     }
-    st.session_state.readiness_reports[name] = build_readiness_report(cleaned, dataset_name=name).to_dict()
+    detected_readiness_target = infer_readiness_target(cleaned)
+    if detected_readiness_target:
+        st.session_state.readiness_target_columns[name] = detected_readiness_target
+    st.session_state.readiness_reports[name] = build_readiness_report(
+        cleaned, dataset_name=name, target_column=detected_readiness_target
+    ).to_dict()
+    record_performance_event("load_clean_validate_dataset", perf_start, details={"rows": int(cleaned.shape[0]), "columns": int(cleaned.shape[1]), "source": getattr(ds, "source_type", "unknown")})
     try:
         record_audit_event("dataset_loaded", dataset_name=name, status="PASS", details=st.session_state.source_registry[name])
     except Exception:
         pass
     # Long-term semantic memory: store dataset summary/readiness evidence.
     try:
-        if st.session_state.get("semantic_memory_enabled", True):
+        if st.session_state.get("semantic_memory_enabled", False):
             package = build_evidence_package(
                 dataset_name=name,
                 df=cleaned,
@@ -472,6 +522,12 @@ def add_dataset(ds: LoadedDataset):
         pass
     if st.session_state.active_dataset is None:
         st.session_state.active_dataset = name
+
+    # Dissertation demo default: prepare the four-model comparison + explanation
+    # once at upload time so later Copilot answers are immediate. The auto-model
+    # routine is guarded and only runs for a clearly detected target such as churn.
+    if st.session_state.get("auto_model_enabled", True):
+        maybe_auto_train_classification(name, cleaned)
 
 
 def active_df() -> pd.DataFrame | None:
@@ -524,12 +580,23 @@ def sample_for_display(df: pd.DataFrame, max_rows: int = 30000) -> pd.DataFrame:
     return df.sample(max_rows, random_state=42)
 
 
+def infer_readiness_target(df: pd.DataFrame) -> str | None:
+    """Auto-detect a clear target for readiness without training a model."""
+    return infer_clear_binary_target(df)
+
+
 def readiness_dict_for(name: str, df: pd.DataFrame, target_column: str | None = None) -> dict:
+    previous_target = st.session_state.get("readiness_target_columns", {}).get(name)
+    effective_target = target_column or previous_target or infer_readiness_target(df)
     report_dict = st.session_state.readiness_reports.get(name)
-    if not report_dict or target_column:
-        report_dict = build_readiness_report(df, dataset_name=name, target_column=target_column).to_dict()
-        if not target_column:
-            st.session_state.readiness_reports[name] = report_dict
+
+    # Rebuild only when no report exists or the effective target changes.
+    if not report_dict or effective_target != previous_target:
+        report_dict = build_readiness_report(df, dataset_name=name, target_column=effective_target).to_dict()
+        st.session_state.readiness_reports[name] = report_dict
+
+    if effective_target:
+        st.session_state.readiness_target_columns[name] = effective_target
     return report_dict
 
 
@@ -546,7 +613,7 @@ def render_readiness_summary(name: str, df: pd.DataFrame, target_column: str | N
 
 
 def maybe_auto_train_classification(name: str, df: pd.DataFrame) -> None:
-    if not st.session_state.get("auto_model_enabled", True):
+    if not st.session_state.get("auto_model_enabled", False):
         return
     if name in st.session_state.model_outputs and st.session_state.model_outputs.get(name) is not None:
         return
@@ -556,11 +623,16 @@ def maybe_auto_train_classification(name: str, df: pd.DataFrame) -> None:
     if not targets:
         st.session_state.auto_model_done[name] = "no_binary_target"
         return
-    target_col = targets[0]
+    target_col = st.session_state.get("readiness_target_columns", {}).get(name) or infer_readiness_target(df)
+    if not target_col:
+        st.session_state.auto_model_done[name] = "target_confirmation_required"
+        return
+    st.session_state.readiness_target_columns[name] = target_col
     positive = infer_positive_label(df[target_col])
     # Avoid surprising long blocking runs for very large datasets. Manual mode can still train.
     max_rows = min(max(len(df), 5000), 120000)
     try:
+        auto_timer = performance_start()
         with st.status("Automatic modelling started", expanded=False) as status:
             st.write(f"Detected target `{target_col}` and positive class `{positive}`")
             st.write("Training classification model set once and caching the result")
@@ -577,12 +649,17 @@ def maybe_auto_train_classification(name: str, df: pd.DataFrame) -> None:
                 st.write(f"Auto explanation could not be generated yet: {explain_exc}")
             st.session_state.auto_model_done[name] = "trained + explained" if name in st.session_state.explanations else "trained"
             st.session_state.readiness_reports[name] = build_readiness_report(df, dataset_name=name, target_column=target_col).to_dict()
+            record_performance_event("auto_train_and_explain", auto_timer, details={"target": target_col, "best_model": output.best_result.model_name if output.best_result else None, "model_training_seconds": getattr(output, "total_training_seconds", None)})
             try:
                 record_audit_event("auto_model_trained", dataset_name=name, status="PASS", details={"target": target_col, "best_model": output.best_result.model_name if output.best_result else None})
             except Exception:
                 pass
             status.update(label=f"Auto modelling/explanation complete: {output.best_result.model_name if output.best_result else 'no best model'}", state="complete")
     except Exception as exc:
+        try:
+            record_performance_event("auto_train_and_explain", auto_timer, status="FAIL", details={"error": str(exc)})
+        except Exception:
+            pass
         st.session_state.auto_model_done[name] = f"failed: {exc}"
         st.warning(f"Automatic modelling could not run: {exc}. Use the manual model page to adjust settings.")
 
@@ -664,9 +741,9 @@ with st.sidebar:
             st.error(f"Google Drive load failed: {exc}")
             st.caption("Use a public/shared file link or Google Sheets link. Private Drive folders require OAuth and are documented as the cloud extension.")
 
-    with st.expander("Storage connectors: PostgreSQL + ChromaDB memory"):
-        st.caption("PostgreSQL loads structured live data. ChromaDB is used as semantic long-term memory for evidence retrieval, not as a raw business database.")
-        store_tab, memory_tab = st.tabs(["PostgreSQL structured data", "ChromaDB semantic memory"])
+    with st.expander("Optional / future connectors: PostgreSQL + ChromaDB"):
+        st.caption("These connectors demonstrate future/optional enterprise extensions. The assessed dissertation workflow uses uploaded structured data and short-term session memory; semantic long-term memory is disabled by default.")
+        store_tab, memory_tab = st.tabs(["PostgreSQL (future/optional)", "ChromaDB (future/optional)"])
         with store_tab:
             pg_uri = st.text_input("PostgreSQL URI", type="password", placeholder="postgresql+psycopg2://user:password@host:5432/db")
             pg_query = st.text_input("Table name or SELECT query", placeholder="public.customers or SELECT * FROM public.customers")
@@ -682,9 +759,9 @@ with st.sidebar:
                     st.error(f"PostgreSQL load failed: {exc}")
         with memory_tab:
             st.session_state.semantic_memory_enabled = st.checkbox(
-                "Enable semantic memory logging",
-                value=st.session_state.get("semantic_memory_enabled", True),
-                help="Stores dataset summaries, readiness reports and Copilot answers in ChromaDB when available. If ChromaDB is not installed, a JSONL fallback is used.",
+                "Enable experimental semantic-memory logging (not part of the assessed core workflow)",
+                value=st.session_state.get("semantic_memory_enabled", False),
+                help="Optional future-architecture demonstration. When enabled, it stores evidence summaries in ChromaDB or a local JSONL fallback. It is OFF by default so the implemented dissertation memory remains short-term session memory.",
             )
             st.json(memory_backend_status())
             memory_query = st.text_input("Search semantic memory", placeholder="e.g. churn model evidence, feedback improvement, readiness fail")
@@ -697,9 +774,9 @@ with st.sidebar:
 
     st.divider()
     st.session_state.auto_model_enabled = st.checkbox(
-        "Auto-model once after data load",
+        "Auto-model once after data load (recommended)",
         value=st.session_state.get("auto_model_enabled", True),
-        help="If a binary target is detected, the app trains the first classification model set once and caches the result. Manual retraining is still available.",
+        help="ON by default for the dissertation demo so model, prediction and SHAP evidence are ready after upload. It runs only once per dataset and the result is cached for fast Copilot answers.",
     )
 
     st.divider()
@@ -791,7 +868,7 @@ if current_page != "Dashboard":
 
 if current_page == "Dashboard":
     st.markdown("<div class='dashboard-section-title'>Dataset readiness and key details</div>", unsafe_allow_html=True)
-    render_readiness_summary(name, df, target_column=model_output.target_column if model_output else None)
+    render_readiness_summary(name, df, target_column=model_output.target_column if model_output else st.session_state.get("readiness_target_columns", {}).get(name))
     metrics = overview_metrics(df)
     cols = st.columns(6)
     for col, (label, value) in zip(cols, metrics.items()):
@@ -800,15 +877,15 @@ if current_page == "Dashboard":
 
     st.markdown("<div class='dashboard-section-title'>Quick model status</div>", unsafe_allow_html=True)
     q1, q2, q3, q4 = st.columns(4)
-    auto_status = st.session_state.auto_model_done.get(name, "waiting")
+    auto_status = st.session_state.auto_model_done.get(name, "queued" if st.session_state.get("auto_model_enabled", True) else "manual mode")
     q1.metric("Auto-model", str(auto_status))
     if model_output and model_output.best_result:
-        q2.metric("Best model", model_output.best_result.model_name)
+        q2.metric("Preferred model (F1-first)", model_output.best_result.model_name)
         q3.metric("F1", f"{model_output.best_result.metrics.get('f1', 0):.3f}")
         roc = model_output.best_result.metrics.get("roc_auc", np.nan)
         q4.metric("ROC-AUC", f"{roc:.3f}" if not np.isnan(roc) else "n/a")
     else:
-        q2.metric("Best model", "not trained")
+        q2.metric("Preferred model (F1-first)", "not trained")
         q3.metric("F1", "n/a")
         q4.metric("ROC-AUC", "n/a")
 
@@ -978,8 +1055,8 @@ if current_page == "Modeling & Prediction Explanation":
         "Classification is the main evaluated workflow for customer churn. "
         "Regression is included as an optional robustness mode for numeric business outcomes such as sales, revenue or profit."
     )
-    auto_status = st.session_state.auto_model_done.get(name, "waiting")
-    st.markdown(f"<div class='card'><b>Auto-modelling status:</b> <span class='small-muted'>{auto_status}</span><br><span class='small-muted'>The app trains once after data load when a binary target is detected. Manual retraining remains available below.</span></div>", unsafe_allow_html=True)
+    auto_status = st.session_state.auto_model_done.get(name, "queued" if st.session_state.get("auto_model_enabled", True) else "manual mode")
+    st.markdown(f"<div class='card'><b>Auto-modelling status:</b> <span class='small-muted'>{auto_status}</span><br><span class='small-muted'>Automatic training runs once when Auto-model is enabled (ON by default for the dissertation demo). Results are cached; manual retraining remains available below.</span></div>", unsafe_allow_html=True)
     model_tabs = st.tabs(["Classification: Yes/No targets", "Regression: numeric targets", "Model evidence and guidance"])
 
     with model_tabs[0]:
@@ -988,21 +1065,45 @@ if current_page == "Modeling & Prediction Explanation":
         if target_candidates:
             left, right = st.columns([2, 1])
             with left:
-                target_col = st.selectbox("Select binary target", target_candidates + [c for c in df.columns if c not in target_candidates], key="model_target")
+                target_options = target_candidates + [c for c in df.columns if c not in target_candidates]
+                preferred_target = st.session_state.get("readiness_target_columns", {}).get(name)
+                target_index = target_options.index(preferred_target) if preferred_target in target_options else 0
+                target_col = st.selectbox(
+                    "Select binary target",
+                    target_options,
+                    index=target_index,
+                    key=f"model_target::{name}",
+                )
+                st.session_state.readiness_target_columns[name] = target_col
             with right:
                 possible_values = list(df[target_col].dropna().unique()) if target_col in df.columns else []
                 default_pos = infer_positive_label(df[target_col]) if target_col in df.columns and df[target_col].nunique(dropna=True) == 2 else (possible_values[0] if possible_values else None)
-                positive_value = st.selectbox("Positive class", possible_values, index=possible_values.index(default_pos) if default_pos in possible_values else 0, key="model_pos") if possible_values else None
+                positive_index = possible_values.index(default_pos) if default_pos in possible_values else 0
+                positive_value = st.selectbox(
+                    "Positive class",
+                    possible_values,
+                    index=positive_index,
+                    format_func=lambda value: str(value),
+                    key=f"model_pos::{name}::{target_col}",
+                ) if possible_values else None
+                if positive_value is not None:
+                    st.caption(f"Positive/risk class: `{positive_value}`")
             st.caption("Assessed workflow: Logistic Regression, Random Forest, Gradient Boosting and MLP Neural Network Baseline.")
             inc_xgb = False
             max_rows = st.slider("Maximum rows for classification training", min_value=5000, max_value=200000, value=min(max(len(df), 5000), 120000), step=5000, help="Large datasets may be sampled for model training to keep the interface responsive.", key="cls_rows")
             if st.button("Train and compare classification models", type="primary", use_container_width=True):
                 try:
-                    with st.spinner("Training classification models and selecting the best model..."):
+                    manual_timer = performance_start()
+                    with st.spinner("Training four classification models and selecting the preferred model using the F1-first rule..."):
                         output = train_models(df, target_col, positive_value, include_xgboost=False, max_training_rows=max_rows)
                         st.session_state.model_outputs[name] = output
                         st.session_state.explanations.pop(name, None)
-                    st.success(f"Training complete. Best model: {output.best_result.model_name}")
+                        st.session_state.readiness_target_columns[name] = target_col
+                        st.session_state.readiness_reports[name] = build_readiness_report(
+                            df, dataset_name=name, target_column=target_col
+                        ).to_dict()
+                    record_performance_event("manual_classification_training", manual_timer, details={"target": target_col, "best_model": output.best_result.model_name if output.best_result else None, "model_training_seconds": getattr(output, "total_training_seconds", None)})
+                    st.success(f"Training complete. Preferred F1-selected model: {output.best_result.model_name}")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Classification training failed: {exc}")
@@ -1014,9 +1115,11 @@ if current_page == "Modeling & Prediction Explanation":
         if model_output and model_output.best_result:
             st.markdown("#### Classification leaderboard")
             st.dataframe(model_output.leaderboard, use_container_width=True)
+            if "training_time_sec" in model_output.leaderboard.columns:
+                st.caption(f"Total model training time recorded by the modelling module: {getattr(model_output, 'total_training_seconds', 0):.3f} seconds. Per-model timings are shown in the leaderboard.")
             best = model_output.best_result
             c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("Best model", best.model_name)
+            c1.metric("Preferred model (F1-first)", best.model_name)
             c2.metric("F1", f"{best.metrics['f1']:.3f}")
             c3.metric("Recall", f"{best.metrics['recall']:.3f}")
             c4.metric("Precision", f"{best.metrics['precision']:.3f}")
@@ -1100,7 +1203,7 @@ if current_page == "Modeling & Prediction Explanation":
         st.info("Train a model first to generate prediction explanations.")
     else:
         best = model_output.best_result
-        st.caption(f"Using best model: `{best.model_name}` trained on `{name}`.")
+        st.caption(f"Using preferred F1-selected model: `{best.model_name}` trained on `{name}`. F1 is the primary selection metric; ROC-AUC, recall and precision are tie-breakers.")
         row_idx = st.number_input("Select row index to explain", min_value=0, max_value=max(len(df) - 1, 0), value=0, step=1)
         row_full = df.iloc[[int(row_idx)]].copy()
         row_features = row_full[[c for c in best.feature_columns if c in row_full.columns]].copy()
@@ -1108,9 +1211,11 @@ if current_page == "Modeling & Prediction Explanation":
             try:
                 pred = best.pipeline.predict(row_features)[0]
                 proba = best.pipeline.predict_proba(row_features)[0, 1] if hasattr(best.pipeline, "predict_proba") else None
+                explain_timer = performance_start()
                 with st.spinner("Computing SHAP/fallback explanation..."):
                     explanation = explain_model(best, row_features)
                     st.session_state.explanations[name] = explanation
+                record_performance_event("manual_shap_or_fallback_explanation", explain_timer, details={"method": getattr(explanation, "method", "unknown"), "model": best.model_name})
                 st.success("Explanation generated.")
                 if proba is not None:
                     risk = "High" if proba >= 0.67 else "Medium" if proba >= 0.34 else "Low"
@@ -1271,59 +1376,70 @@ if current_page == "Chat":
         binary_targets = detect_binary_targets(df)
         target_col = model_output.target_column if model_output else (binary_targets[0] if binary_targets else None)
         positive = model_output.positive_label if model_output else (infer_positive_label(df[target_col]) if target_col else None)
-        response = answer_question(
-            question,
-            df,
-            dataset_name=name,
-            target_column=target_col,
-            positive_label=positive,
-            model_output=model_output,
-            explanation_output=st.session_state.explanations.get(name),
-            previous_context=st.session_state.chat_contexts.get(name),
-        )
-        if response.context:
-            st.session_state.chat_contexts[name] = response.context
-        st.session_state.session_memory = update_short_term_memory(
-            st.session_state.session_memory,
-            dataset=name,
-            question=question,
-            context=response.context,
-            answer_summary=response.answer,
-        )
-        try:
-            if st.session_state.get("semantic_memory_enabled", True):
-                package = build_evidence_package(
-                    dataset_name=name,
-                    df=df,
-                    question=question,
-                    readiness=readiness_dict_for(name, df),
-                    model_output=model_output,
-                    explanation_output=st.session_state.explanations.get(name),
-                    response_context=response.context,
-                )
-                memory_text = evidence_package_to_text(package) + " | Answer: " + response.answer[:1200]
-                mem_id = add_memory_document(memory_text, metadata={"dataset": name, "type": "copilot_answer", "question": question})
-                st.session_state.semantic_memory_events.append({"dataset": name, "type": "copilot_answer", "memory_id": mem_id, "question": question})
-        except Exception:
-            pass
-        st.session_state.chat_history.append({"dataset": name, "question": question, "response": response})
-        st.session_state.audit_events_session.append({
-            "dataset": name,
-            "event": "copilot_answer",
-            "question": question,
-            "context": response.context,
-            "evidence_rows": len(response.table) if response.table is not None else 0,
-        })
-        try:
-            record_audit_event(
-                "copilot_answer",
+        questions_to_run = split_reviewer_questions(question)
+        if len(questions_to_run) > 1:
+            st.info(f"Detected {len(questions_to_run)} numbered questions. I will answer them as separate evidence records so the chat does not mix different intents.")
+        for single_question in questions_to_run:
+            chat_timer = performance_start()
+            response = answer_question(
+                single_question,
+                df,
                 dataset_name=name,
-                status=readiness_dict_for(name, df).get("overall_status", "WARNING"),
-                question=question,
-                details={"context": response.context, "evidence_rows": len(response.table) if response.table is not None else 0},
+                target_column=target_col,
+                positive_label=positive,
+                model_output=model_output,
+                explanation_output=st.session_state.explanations.get(name),
+                previous_context=st.session_state.chat_contexts.get(name),
             )
-        except Exception:
-            pass
+            if response.context:
+                st.session_state.chat_contexts[name] = response.context
+            st.session_state.session_memory = update_short_term_memory(
+                st.session_state.session_memory,
+                dataset=name,
+                question=single_question,
+                context=response.context,
+                answer_summary=response.answer,
+            )
+            try:
+                if st.session_state.get("semantic_memory_enabled", False):
+                    package = build_evidence_package(
+                        dataset_name=name,
+                        df=df,
+                        question=single_question,
+                        readiness=readiness_dict_for(name, df),
+                        model_output=model_output,
+                        explanation_output=st.session_state.explanations.get(name),
+                        response_context=response.context,
+                    )
+                    memory_text = evidence_package_to_text(package) + " | Answer: " + response.answer[:1200]
+                    mem_id = add_memory_document(memory_text, metadata={"dataset": name, "type": "copilot_answer", "question": single_question})
+                    st.session_state.semantic_memory_events.append({"dataset": name, "type": "copilot_answer", "memory_id": mem_id, "question": single_question})
+            except Exception:
+                pass
+            st.session_state.chat_history.append({"dataset": name, "question": single_question, "response": response})
+            record_performance_event("copilot_answer_generation", chat_timer, status=getattr(response, "grounding_status", "PASS") or "PASS", details={"question": single_question[:120], "topic": (response.context or {}).get("topic"), "grounding_status": getattr(response, "grounding_status", ""), "confidence": getattr(response, "confidence", ""), "evidence_rows": len(response.table) if response.table is not None else 0})
+            st.session_state.audit_events_session.append({
+                "dataset": name,
+                "event": "copilot_answer",
+                "question": single_question,
+                "interpreted_question": getattr(response, "interpreted_question", ""),
+                "intent": getattr(response, "intent", "") or (response.context or {}).get("topic"),
+                "grounding_status": getattr(response, "grounding_status", ""),
+                "confidence": getattr(response, "confidence", ""),
+                "limitation_or_refusal": getattr(response, "limitation_or_refusal", False),
+                "context": response.context,
+                "evidence_rows": len(response.table) if response.table is not None else 0,
+            })
+            try:
+                record_audit_event(
+                    "copilot_answer",
+                    dataset_name=name,
+                    status=getattr(response, "grounding_status", "WARNING") or "WARNING",
+                    question=single_question,
+                    details={"context": response.context, "grounding_status": getattr(response, "grounding_status", ""), "confidence": getattr(response, "confidence", ""), "evidence_rows": len(response.table) if response.table is not None else 0},
+                )
+            except Exception:
+                pass
 
     # Keep chat scoped to the active dataset so answers from another uploaded file do not mix in.
     if st.session_state.chat_history and isinstance(st.session_state.chat_history[0], dict):
@@ -1446,7 +1562,7 @@ if current_page == "Evaluation":
 
 if current_page == "Research & Memory":
     st.markdown("### Research contribution, readiness criteria and memory architecture")
-    st.caption("Use this page to explain the research contribution, measurable PASS/WARNING/FAIL criteria, short-term memory and ChromaDB long-term semantic memory.")
+    st.caption("Use this page to explain the research contribution, dissertation-aligned PASS/WARNING/FAIL criteria and implemented short-term session memory. Long-term ChromaDB/retrieval is shown only as a future/optional extension.")
 
     prof = dataset_profile(df)
     rows = int(prof.get("rows", len(df)))
@@ -1476,7 +1592,7 @@ if current_page == "Research & Memory":
     st.markdown("#### Measurable PASS / WARNING / FAIL readiness criteria")
     st.dataframe(readiness_criteria_table(), use_container_width=True, hide_index=True)
 
-    st.markdown("#### Memory architecture")
+    st.markdown("#### Memory architecture: implemented core vs future extension")
     st.dataframe(memory_architecture_table(), use_container_width=True, hide_index=True)
     mem_status = memory_backend_status()
     st.json(mem_status)
@@ -1486,7 +1602,7 @@ if current_page == "Research & Memory":
         st.dataframe(stm, use_container_width=True)
     semantic_events = pd.DataFrame(st.session_state.get("semantic_memory_events", []))
     if not semantic_events.empty:
-        st.markdown("#### Semantic memory events recorded this session")
+        st.markdown("#### Optional experimental semantic-memory events recorded this session")
         st.dataframe(semantic_events, use_container_width=True, hide_index=True)
 
     st.markdown("#### Advanced document retrieval pipeline")
@@ -1586,17 +1702,82 @@ Frontend UI
 
 if current_page == "Export Data":
     st.markdown("### Export data, reports, chat answers and audit evidence")
-    markdown = make_markdown_report(name, df, report, model_output, st.session_state.explanations.get(name))
+    readiness_current = readiness_dict_for(name, df, target_column=model_output.target_column if model_output else None)
+    export_timer = performance_start()
+    full_package = build_results_export_package(
+        dataset_name=name,
+        df=df,
+        cleaning_report=report,
+        readiness=readiness_current,
+        model_output=model_output,
+        explanation_output=st.session_state.explanations.get(name),
+        chat_history=st.session_state.chat_history,
+        audit_events=st.session_state.audit_events_session,
+        performance_events=st.session_state.performance_events,
+    )
+    record_performance_event("build_full_results_export_package", export_timer, details={"package_bytes": len(full_package)})
+    # Rebuild once so the ZIP itself contains the export-build timing event that
+    # was just recorded. The second packaging pass is not separately timed to
+    # avoid recursive/self-inflating timing records.
+    full_package = build_results_export_package(
+        dataset_name=name,
+        df=df,
+        cleaning_report=report,
+        readiness=readiness_current,
+        model_output=model_output,
+        explanation_output=st.session_state.explanations.get(name),
+        chat_history=st.session_state.chat_history,
+        audit_events=st.session_state.audit_events_session,
+        performance_events=st.session_state.performance_events,
+    )
+    st.download_button(
+        "Download FULL results package (HTML report + graphs + tables + chat + audit)",
+        full_package,
+        file_name=f"{name}_full_results_package.zip",
+        mime="application/zip",
+        use_container_width=True,
+        type="primary",
+    )
+    st.caption("Open `full_results_report.html` inside the ZIP for the complete dissertation evidence report with graphs.")
+    markdown = make_markdown_report(
+        name,
+        df,
+        report,
+        model_output,
+        st.session_state.explanations.get(name),
+        readiness=readiness_current,
+        chat_history=st.session_state.chat_history,
+        performance_events=st.session_state.performance_events,
+        audit_events=st.session_state.audit_events_session,
+    )
     st.download_button("Download Markdown report", markdown, file_name=f"{name}_copilot_report.md", mime="text/markdown", use_container_width=True)
     st.download_button("Download cleaned active dataset CSV", df.to_csv(index=False), file_name=f"{name}_cleaned.csv", mime="text/csv", use_container_width=True)
     if report:
         st.download_button("Download cleaning report CSV", report.to_dataframe().to_csv(index=False), file_name=f"{name}_cleaning_report.csv", mime="text/csv", use_container_width=True)
-    readiness_export = pd.DataFrame(readiness_dict_for(name, df).get("gates", []))
+    readiness_export = pd.DataFrame(readiness_current.get("gates", []))
     if not readiness_export.empty:
         st.download_button("Download readiness gates CSV", readiness_export.to_csv(index=False), file_name=f"{name}_readiness_gates.csv", mime="text/csv", use_container_width=True)
+    explanation_export = st.session_state.explanations.get(name)
+    if explanation_export is not None:
+        global_exp = getattr(explanation_export, "global_importance", pd.DataFrame())
+        local_exp = getattr(explanation_export, "local_importance", pd.DataFrame())
+        if global_exp is not None and not global_exp.empty:
+            st.download_button("Download global explanation drivers CSV", global_exp.to_csv(index=False), file_name=f"{name}_top_explanation_drivers.csv", mime="text/csv", use_container_width=True)
+        if local_exp is not None and not local_exp.empty:
+            st.download_button("Download local prediction explanation drivers CSV", local_exp.to_csv(index=False), file_name=f"{name}_local_prediction_explanation_drivers.csv", mime="text/csv", use_container_width=True)
     audit_session = pd.DataFrame(st.session_state.audit_events_session)
     if not audit_session.empty:
         st.download_button("Download session audit log CSV", audit_session.to_csv(index=False), file_name=f"{name}_session_audit_log.csv", mime="text/csv", use_container_width=True)
+    perf_export = pd.DataFrame(st.session_state.get("performance_events", []))
+    if not perf_export.empty:
+        st.markdown("#### Runtime/process evidence")
+        st.dataframe(perf_export, use_container_width=True, hide_index=True)
+        st.download_button("Download runtime/process evidence CSV", perf_export.to_csv(index=False), file_name=f"{name}_runtime_process_evidence.csv", mime="text/csv", use_container_width=True)
+        runtime_summary = build_runtime_summary(perf_export, model_output)
+        st.markdown("#### Whole computational process-time summary")
+        st.caption("This sums recorded computational stages and excludes time while a user is reading or typing questions.")
+        st.dataframe(runtime_summary, use_container_width=True, hide_index=True)
+        st.download_button("Download runtime summary CSV", runtime_summary.to_csv(index=False), file_name=f"{name}_runtime_summary.csv", mime="text/csv", use_container_width=True)
     # Export Copilot chat history with outputs for dissertation evidence.
     active_chat_rows = []
     if st.session_state.chat_history and isinstance(st.session_state.chat_history[0], dict):
@@ -1606,14 +1787,25 @@ if current_page == "Export Data":
                 active_chat_rows.append({
                     "dataset": name,
                     "question": item.get("question", ""),
+                    "interpreted_question": getattr(resp, "interpreted_question", ""),
+                    "intent": getattr(resp, "intent", "") or str((getattr(resp, "context", {}) or {}).get("topic", "")),
+                    "grounding_status": getattr(resp, "grounding_status", ""),
+                    "grounding_reason": getattr(resp, "grounding_reason", ""),
+                    "confidence": getattr(resp, "confidence", ""),
+                    "response_type": getattr(resp, "response_type", "GROUNDED_ANSWER"),
+                    "limitation_or_refusal": getattr(resp, "limitation_or_refusal", False),
                     "answer": getattr(resp, "answer", ""),
                     "safety_warning": getattr(resp, "safety_warning", ""),
-                    "interpreted_question": getattr(resp, "interpreted_question", ""),
                     "evidence_rows": len(getattr(resp, "table", pd.DataFrame())) if getattr(resp, "table", None) is not None else 0,
+                    "has_chart": bool(getattr(resp, "chart", None) is not None),
                 })
     chat_export_df = pd.DataFrame(active_chat_rows)
     if not chat_export_df.empty:
         st.download_button("Download Copilot chat answers CSV", chat_export_df.to_csv(index=False), file_name=f"{name}_copilot_chat_answers.csv", mime="text/csv", use_container_width=True)
+        evaluation_summary = build_copilot_evaluation_summary(chat_export_df)
+        st.markdown("#### Copilot evaluation/test summary")
+        st.dataframe(evaluation_summary, use_container_width=True, hide_index=True)
+        st.download_button("Download Copilot evaluation summary CSV", evaluation_summary.to_csv(index=False), file_name=f"{name}_copilot_evaluation_summary.csv", mime="text/csv", use_container_width=True)
         chat_md = "\n\n".join([
             f"## Question\n{row['question']}\n\n## Answer\n{row['answer']}\n\n## Safety warning\n{row['safety_warning']}"
             for _, row in chat_export_df.iterrows()
@@ -1621,6 +1813,20 @@ if current_page == "Export Data":
         st.download_button("Download Copilot chat answers Markdown", chat_md, file_name=f"{name}_copilot_chat_answers.md", mime="text/markdown", use_container_width=True)
     else:
         st.info("No Copilot chat answers are available yet for export. Ask questions in the Chat page first.")
+
+    memory_export = build_memory_allocation_evidence(
+        df=df,
+        readiness=readiness_current,
+        model_output=model_output,
+        explanation_output=explanation_export,
+        chat_df=chat_export_df,
+        audit_df=audit_session,
+        perf_df=perf_export,
+    )
+    st.markdown("#### Memory allocation evidence")
+    st.caption("Shows tracked short-term session artefacts plus current/peak Python-process RSS. Long-term ChromaDB/PostgreSQL memory remains future/optional and is disabled by default.")
+    st.dataframe(memory_export, use_container_width=True, hide_index=True)
+    st.download_button("Download memory allocation evidence CSV", memory_export.to_csv(index=False), file_name=f"{name}_memory_allocation_evidence.csv", mime="text/csv", use_container_width=True)
 
     semantic_events_df = pd.DataFrame(st.session_state.get("semantic_memory_events", []))
     if not semantic_events_df.empty:

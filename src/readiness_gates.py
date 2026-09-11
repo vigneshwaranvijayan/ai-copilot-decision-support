@@ -1,13 +1,15 @@
-"""Measurable PASS/WARNING/FAIL readiness criteria for the research prototype.
+"""Measurable PASS/WARNING/FAIL readiness criteria for the dissertation prototype.
 
-The purpose of this module is to make the readiness contribution explicit and
-reproducible.  These thresholds are intentionally transparent rather than
-hidden inside a black-box score.
+The core gates mirror Table 3.1 in the dissertation methodology:
+file loading, dataset size, missing values, duplicate rows, target-column
+availability, target validity, class balance, data types and evidence
+availability.  A privacy/security screen is retained as a supplementary safety
+check, but it is not used to redefine the dissertation's data-readiness result.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import pandas as pd
 
@@ -23,9 +25,22 @@ READINESS_THRESHOLDS: Dict[str, Dict[str, Any]] = {
     "column_count": {"pass_min": 2, "fail_below": 2},
 }
 
+CORE_READINESS_GATES = {
+    "File loading / data availability",
+    "Dataset size",
+    "Missing values",
+    "Duplicate rows",
+    "Target column",
+    "Target validity",
+    "Class balance",
+    "Data types",
+    "Evidence availability",
+}
+
+
 @dataclass
 class ReadinessCriterion:
-    criterion: str
+    check_area: str
     pass_condition: str
     warning_condition: str
     fail_condition: str
@@ -33,70 +48,77 @@ class ReadinessCriterion:
 
 
 def readiness_criteria_table() -> pd.DataFrame:
-    """Return a dissertation-ready explanation of the readiness framework."""
+    """Return the dissertation Table 3.1 criteria plus one labelled extra check."""
     rows = [
         ReadinessCriterion(
-            "File/data availability",
-            "Dataset loads and has at least one row and two columns",
-            "Dataset loads but has very small scope or weak structure",
-            "Dataset cannot be read, is empty, or has fewer than two columns",
-            "The Copilot cannot provide evidence-grounded answers without usable records and fields.",
+            "File loading / data availability",
+            "File loads correctly and contains usable records/columns",
+            "File loads with minor structural concerns",
+            "File cannot be loaded, is empty, or has too few columns",
+            "The workflow requires usable records and fields before analysis can be grounded.",
         ),
         ReadinessCriterion(
-            "Schema readability",
-            "Column names are readable and not mostly generated names",
-            "Some columns are unnamed, duplicated, or weakly named",
-            "Schema is unusable for matching questions to columns",
-            "Column names are needed for question interpretation and evidence traceability.",
+            "Dataset size",
+            "500 or more rows",
+            "100-499 rows",
+            "Fewer than 100 rows",
+            "Very small datasets can produce unstable model metrics and explanations.",
         ),
         ReadinessCriterion(
-            "Missing cells",
-            "0-5% missing cells",
-            "More than 5% and up to 20% missing cells",
-            "More than 20% missing cells",
-            "High missingness can distort summaries, model training, and business recommendations.",
+            "Missing values",
+            "0-5% missing values",
+            "More than 5% and up to 20% missing values",
+            "More than 20% missing values",
+            "High missingness can distort summaries, models and recommendations.",
         ),
         ReadinessCriterion(
             "Duplicate rows",
             "0-5% duplicate rows",
             "More than 5% and up to 15% duplicate rows",
             "More than 15% duplicate rows",
-            "Duplicates can inflate patterns, customer counts, and model performance.",
+            "Duplicates can inflate patterns and model performance.",
         ),
         ReadinessCriterion(
-            "Modelling row count",
-            "500 or more rows for automatic modelling",
-            "100-499 rows; modelling allowed with caution",
-            "Fewer than 100 rows; modelling not reliable",
-            "Very small datasets can produce unstable model metrics and explanations.",
+            "Target column",
+            "Valid target column is available",
+            "Possible target requires user confirmation",
+            "No suitable target column is available",
+            "Prediction and explanation require a clearly selected target.",
         ),
         ReadinessCriterion(
-            "Target readiness",
-            "Target exists and has at least two valid classes/values",
-            "Target needs user confirmation or class balance is weak",
-            "Target missing, constant, or not usable",
-            "Prediction and explanation require a valid target variable.",
+            "Target validity",
+            "Target has at least two usable classes/values",
+            "Target requires cleaning or confirmation",
+            "Target has one class or unusable values",
+            "A supervised model cannot be trained on a constant or unusable target.",
         ),
         ReadinessCriterion(
             "Class balance",
-            "Minority class is at least 10%",
-            "Minority class is 5-10%",
+            "Minority class is 10% or higher",
+            "Minority class is between 5% and 10%",
             "Minority class is below 5%",
-            "Severe imbalance can make accuracy misleading and reduce recall for important cases.",
+            "Severe imbalance can make accuracy misleading and reduce minority-class recall.",
         ),
         ReadinessCriterion(
-            "Privacy/security screen",
+            "Data types",
+            "Columns can be processed after standard encoding/scaling",
+            "Some columns require cleaning or conversion",
+            "Major data-type issues prevent modelling",
+            "The modelling pipeline needs scalar numeric/categorical/date-like fields.",
+        ),
+        ReadinessCriterion(
+            "Evidence availability",
+            "Enough evidence exists for charts, model explanation and Copilot answers",
+            "Partial evidence exists, so limitations are required",
+            "Required evidence is missing",
+            "The Copilot must refuse or limit answers when supporting evidence is absent.",
+        ),
+        ReadinessCriterion(
+            "Supplementary privacy/security screen",
             "No obvious personal identifiers detected",
             "Possible personal identifiers detected",
-            "High-risk sensitive fields detected or access is not authorised",
-            "Decision support must protect privacy and avoid unsafe automated use of sensitive data.",
-        ),
-        ReadinessCriterion(
-            "Question evidence availability",
-            "Required columns/model/explanation artefacts are available",
-            "Partial or approximate evidence is available",
-            "Required evidence is missing",
-            "The Copilot must refuse rather than invent if evidence is not present.",
+            "High-risk sensitive fields or unauthorised access would require restriction",
+            "This is an additional responsible-use control, not a replacement for Table 3.1.",
         ),
     ]
     return pd.DataFrame([asdict(r) for r in rows])
@@ -128,16 +150,11 @@ def class_balance_status(series: pd.Series) -> tuple[str, float, str]:
         return PASS, minority, f"Minority class is {minority:.2f}% of records."
     if minority >= float(READINESS_THRESHOLDS["minority_class_percent"]["warning_min"]):
         return WARNING, minority, f"Minority class is only {minority:.2f}%; use recall/F1 and report imbalance."
-    return FAIL, minority, f"Minority class is {minority:.2f}%, which is too imbalanced for reliable automatic modelling."
+    return FAIL, minority, f"Minority class is {minority:.2f}%, below the 5% FAIL threshold."
 
 
 def answer_readiness_status(*, has_required_columns: bool, has_evidence: bool, has_model_or_eda: bool = True, safety_ok: bool = True) -> str:
-    """Reusable answer-level PASS/WARNING/FAIL decision.
-
-    PASS: required columns and evidence are present.
-    WARNING: partial evidence is available but one support artefact is weak.
-    FAIL: required columns/evidence are missing or the request is unsafe.
-    """
+    """Reusable answer-level PASS/WARNING/FAIL decision."""
     if not safety_ok or not has_required_columns or not has_evidence:
         return FAIL
     if not has_model_or_eda:

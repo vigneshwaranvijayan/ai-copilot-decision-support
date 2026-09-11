@@ -1,3 +1,0 @@
-dataset,rows,columns,file_size_mb,cleaning_completed,eda_completed,model_mode,training_rows_used,best_model,runtime_notes,limitations
-Telco Customer Churn,7043,21,,yes,yes,classification,,,,main evaluation dataset
-UCI Online Retail II,1067371,,,planned,planned,eda_or_sampled_regression,,,,large-scale robustness dataset

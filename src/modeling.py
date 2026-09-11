@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+import time
 
 import numpy as np
 import pandas as pd
@@ -53,6 +54,33 @@ TARGET_NAME_HINTS = [
 ]
 
 
+
+ID_COLUMN_NAME_HINTS = {"id", "customerid", "clientid", "accountid", "userid", "rowid", "caseid", "recordid"}
+
+
+def is_identifier_like_column(series: pd.Series, column_name: str) -> bool:
+    """Detect identifier columns that should not be used as predictive features.
+
+    The Telco churn file includes `customerID`. Keeping this as a one-hot encoded
+    model feature is academically risky because identifiers are not business
+    drivers. The prototype removes clear ID-like columns before training so that
+    the leaderboard and explanation drivers reflect meaningful customer features.
+    """
+    name = str(column_name).strip().lower().replace("_", "").replace("-", "")
+    if name in ID_COLUMN_NAME_HINTS or name.endswith("id"):
+        return True
+    non_null = series.dropna()
+    if non_null.empty:
+        return False
+    unique_ratio = non_null.astype(str).nunique(dropna=True) / max(len(non_null), 1)
+    avg_len = non_null.astype(str).str.len().mean()
+    # High-cardinality text columns with almost one value per row are usually
+    # identifiers, especially when values are code-like rather than categories.
+    if unique_ratio >= 0.90 and avg_len >= 6 and not pd.api.types.is_numeric_dtype(non_null):
+        return True
+    return False
+
+
 @dataclass
 class ModelResult:
     model_name: str
@@ -67,6 +95,7 @@ class ModelResult:
     y_pred: np.ndarray
     y_proba: Optional[np.ndarray]
     sampled_training_rows: int
+    training_seconds: float = 0.0
     notes: str = ""
 
 
@@ -79,6 +108,7 @@ class TrainingOutput:
     target_column: str
     positive_label: object
     class_distribution: pd.DataFrame
+    total_training_seconds: float = 0.0
 
 
 def detect_binary_targets(df: pd.DataFrame) -> List[str]:
@@ -102,6 +132,28 @@ def detect_binary_targets(df: pd.DataFrame) -> List[str]:
             score -= 30
         candidates.append((score, col))
     return [col for _, col in sorted(candidates, key=lambda x: (x[0], x[1]), reverse=True)]
+
+
+def infer_clear_binary_target(df: pd.DataFrame) -> Optional[str]:
+    """Return a safe auto-detected binary target when the intent is clear.
+
+    Exact business target names such as ``churn``/``attrition``/``target`` are
+    preferred. If a dataset contains exactly one binary column, that single
+    candidate can also be used provisionally. Multiple unrelated binary fields
+    are left for explicit user confirmation.
+    """
+    candidates = detect_binary_targets(df)
+    if not candidates:
+        return None
+    normalized_hints = {
+        str(h).lower().replace("_", "").replace("-", "").replace(" ", "")
+        for h in TARGET_NAME_HINTS
+    }
+    for col in candidates:
+        normalized = str(col).lower().replace("_", "").replace("-", "").replace(" ", "")
+        if normalized in normalized_hints:
+            return col
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def infer_positive_label(series: pd.Series) -> object:
@@ -270,7 +322,13 @@ def train_models(
     class_dist["percent"] = (class_dist["count"] / class_dist["count"].sum() * 100).round(2)
 
     working = _sample_for_training(working, target_column, max_training_rows, random_state)
-    feature_columns = [c for c in working.columns if c != target_column]
+    # Exclude identifier-like columns such as customerID from modelling. They can
+    # memorise individual records and create poor explanation evidence without
+    # providing a reusable business driver.
+    feature_columns = [
+        c for c in working.columns
+        if c != target_column and not is_identifier_like_column(working[c], c)
+    ]
     X = prepare_features_for_model(working[feature_columns].copy())
     # Drop columns that are completely missing or have one unique value.
     keep_cols = [c for c in X.columns if X[c].notna().sum() > 0 and X[c].nunique(dropna=True) > 1]
@@ -291,16 +349,19 @@ def train_models(
     models = get_candidate_models(include_xgboost=include_xgboost, random_state=random_state)
     results: List[ModelResult] = []
     skipped: Dict[str, str] = {}
+    total_timer_start = time.perf_counter()
 
     for name, estimator in models.items():
+        model_timer_start = time.perf_counter()
         try:
             pipeline = Pipeline(steps=[("preprocess", build_preprocessor(X_train)), ("model", estimator)])
-            if name == "XGBoost":
+            if name in {"XGBoost", "MLP Neural Network Baseline"}:
+                # XGBoost and recent scikit-learn MLP early-stopping behave more
+                # reliably with encoded binary labels. Metrics are still reported
+                # against the same positive class used by the dissertation workflow.
                 pipeline.fit(X_train, y_train_bin)
                 y_pred = pipeline.predict(X_test)
                 y_proba = _safe_proba(pipeline, X_test)
-                # XGBoost is trained on the encoded binary target, so metric
-                # calculation must use the encoded test target as well.
                 metrics = _metrics(y_test_bin, y_pred, y_proba, positive_label=1)
                 y_true_for_conf = y_test_bin
                 y_pred_for_conf = np.asarray(y_pred).astype(int)
@@ -315,6 +376,8 @@ def train_models(
                 positive_for_result = positive_label
 
             conf = confusion_matrix(y_true_for_conf, y_pred_for_conf, labels=[0, 1])
+            training_seconds = round(time.perf_counter() - model_timer_start, 3)
+            metrics["training_seconds"] = training_seconds
             results.append(
                 ModelResult(
                     model_name=name,
@@ -329,11 +392,14 @@ def train_models(
                     y_pred=y_pred,
                     y_proba=y_proba,
                     sampled_training_rows=working.shape[0],
-                    notes="Target encoded as 1=positive class for XGBoost." if name == "XGBoost" else "",
+                    training_seconds=training_seconds,
+                    notes="Target encoded as 1=positive class for this model." if name in {"XGBoost", "MLP Neural Network Baseline"} else "",
                 )
             )
         except Exception as exc:
             skipped[name] = str(exc)
+
+    total_training_seconds = round(time.perf_counter() - total_timer_start, 3)
 
     if not results:
         raise RuntimeError("No model could be trained successfully. Check the dataset and target column.")
@@ -346,7 +412,10 @@ def train_models(
             "recall": round(r.metrics["recall"], 4),
             "f1": round(r.metrics["f1"], 4),
             "roc_auc": round(r.metrics["roc_auc"], 4) if not np.isnan(r.metrics["roc_auc"]) else np.nan,
-            "training_rows": r.sampled_training_rows,
+            "modeling_rows": r.sampled_training_rows,
+            "training_rows": int(r.sampled_training_rows - len(r.X_test)),
+            "test_rows": int(len(r.X_test)),
+            "training_time_sec": round(float(getattr(r, "training_seconds", 0.0)), 3),
         }
         for r in results
     ])
@@ -359,7 +428,7 @@ def train_models(
     leaderboard = leaderboard.sort_values(["f1", "roc_auc", "recall", "precision"], ascending=False).reset_index(drop=True)
     best_model_name = leaderboard.loc[0, "model"]
     best = next(r for r in results if r.model_name == best_model_name)
-    return TrainingOutput(results, best, leaderboard, skipped, target_column, positive_label, class_dist)
+    return TrainingOutput(results, best, leaderboard, skipped, target_column, positive_label, class_dist, total_training_seconds)
 
 
 def get_feature_names(pipeline: Pipeline) -> List[str]:
@@ -393,6 +462,7 @@ class RegressionModelResult:
     y_test: pd.Series
     y_pred: np.ndarray
     sampled_training_rows: int
+    training_seconds: float = 0.0
     notes: str = ""
 
 
@@ -571,7 +641,10 @@ def train_regression_models(
             "mae": round(r.metrics["mae"], 4) if not np.isnan(r.metrics["mae"]) else np.nan,
             "rmse": round(r.metrics["rmse"], 4) if not np.isnan(r.metrics["rmse"]) else np.nan,
             "r2": round(r.metrics["r2"], 4) if not np.isnan(r.metrics["r2"]) else np.nan,
-            "training_rows": r.sampled_training_rows,
+            "modeling_rows": r.sampled_training_rows,
+            "training_rows": int(r.sampled_training_rows - len(r.X_test)),
+            "test_rows": int(len(r.X_test)),
+            "training_time_sec": round(float(getattr(r, "training_seconds", 0.0)), 3),
         }
         for r in results
     ])

@@ -78,24 +78,35 @@ def _safe_sum_numeric(series: pd.Series) -> float:
 
 
 def detect_business_domain(df: pd.DataFrame, question: str = "") -> str:
-    """Return likely domain for suggestion logic.
+    """Return likely business domain using boundary-safe question matching.
 
-    Domains: sales_retail, employee_hr, customer_feedback, customer_churn,
-    bank_marketing, operations_service, general.
+    The earlier implementation searched the compact question for ``"hr"``.
+    That made phrases such as ``"high-risk"`` accidentally match HR because
+    ``highrisk`` contains the letters ``hr`` across a word boundary.  Domain
+    routing now uses normalised word tokens for short terms and compact phrases
+    only for genuine multi-word aliases.
     """
-    q = _compact(question)
+    q_norm = _norm(question)
+    q_tokens = set(q_norm.split())
+    q_compact = _compact(question)
     cols = " ".join(_compact(c) for c in df.columns)
 
     # Question terms get priority because one dataset may contain several fields.
-    if any(k in q for k in ["employee", "employe", "salary", "promotion", "resign", "attrition", "hr", "overtime"]):
+    employee_terms = {"employee", "employees", "salary", "promotion", "promote", "resign", "attrition", "overtime", "hr"}
+    sales_terms = {"sale", "sales", "product", "products", "purchase", "stock", "revenue", "profit", "forecast", "sell"}
+    feedback_terms = {"feedback", "review", "reviews", "comment", "comments", "complaint", "complaints"}
+    marketing_terms = {"marketing", "campaign", "subscribe", "subscribed", "subscription", "bank"}
+    operations_terms = {"ticket", "tickets", "service", "services", "operation", "operations", "delay", "resolution"}
+
+    if q_tokens & employee_terms:
         return "employee_hr"
-    if any(k in q for k in ["sale", "sales", "product", "purchase", "stock", "revenue", "profit", "forecast", "nextmonth", "sell"]):
+    if q_tokens & sales_terms or "nextmonth" in q_compact:
         return "sales_retail"
-    if any(k in q for k in ["feedback", "review", "comment", "complaint", "customerfeedback"]):
+    if q_tokens & feedback_terms or "customerfeedback" in q_compact:
         return "customer_feedback"
-    if any(k in q for k in ["marketing", "campaign", "subscribe", "subscription", "bank"]):
+    if q_tokens & marketing_terms:
         return "bank_marketing"
-    if any(k in q for k in ["ticket", "service", "complaint", "operation", "delay", "resolution"]):
+    if q_tokens & operations_terms:
         return "operations_service"
 
     if any(k in cols for k in ["quantity", "unitprice", "sales", "revenue", "invoice", "stockcode", "product", "description", "order"]):

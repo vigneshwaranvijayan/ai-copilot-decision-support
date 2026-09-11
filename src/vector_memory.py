@@ -2,8 +2,8 @@
 
 ChromaDB is optional at runtime. If the package is unavailable, the prototype
 still runs and stores memory records in a local JSONL file so tests and demos do
-not fail. The dissertation architecture treats ChromaDB as the long-term semantic
-memory layer.
+not fail. This module is retained as an optional future-architecture demonstration.
+The assessed dissertation workflow uses short-term session memory by default.
 """
 from __future__ import annotations
 
@@ -24,9 +24,15 @@ def _fallback_file(memory_dir: str | Path = DEFAULT_MEMORY_DIR) -> Path:
 
 
 def chromadb_available() -> bool:
+    """Check optional ChromaDB availability without importing it.
+
+    Importing ChromaDB just to render a status box can noticeably slow the
+    first Streamlit page load.  The real package is imported lazily only when
+    the user explicitly enables/uses semantic memory.
+    """
     try:
-        import chromadb  # type: ignore  # noqa: F401
-        return True
+        import importlib.util
+        return importlib.util.find_spec("chromadb") is not None
     except Exception:
         return False
 
@@ -44,7 +50,7 @@ def memory_backend_status(memory_dir: str | Path = DEFAULT_MEMORY_DIR) -> Dict[s
         "chromadb_available": chromadb_available(),
         "memory_dir": str(Path(memory_dir)),
         "fallback_records": count,
-        "purpose": "Long-term semantic memory for dataset summaries, readiness reports, explanations, audit records and generated insights.",
+        "purpose": "Optional future semantic-memory demonstration; disabled by default in the assessed workflow.",
     }
 
 

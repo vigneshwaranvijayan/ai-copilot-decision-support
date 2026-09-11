@@ -1,0 +1,16 @@
+FINAL WORKING FAST FIX - automated verification
+==============================================
+
+Result: 86 / 86 tests passed
+
+Latest regression checks specifically cover:
+- Telco churn target auto-detection for readiness
+- PASS readiness before model training when a clear churn target exists
+- Positive class inference = Yes
+- Auto-model enabled by default
+- Dataset/target-specific Positive class widget key (prevents blank state)
+- Shared Windows runtime reuse across extracted project versions
+- Previous 82 cross-verification tests
+
+Command: pytest -q
+Status: PASS

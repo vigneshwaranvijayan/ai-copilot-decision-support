@@ -11,12 +11,24 @@ from sklearn.pipeline import Pipeline
 
 from .modeling import ModelResult, get_feature_names, transformed_matrix
 
-try:
-    import shap  # type: ignore
-    SHAP_AVAILABLE = True
-except Exception:  # pragma: no cover
-    shap = None
-    SHAP_AVAILABLE = False
+# SHAP is intentionally imported lazily. Importing it during Streamlit module
+# startup adds avoidable delay before the website becomes available.
+shap = None
+SHAP_AVAILABLE = None
+
+def _load_shap():
+    global shap, SHAP_AVAILABLE
+    if SHAP_AVAILABLE is not None:
+        return shap
+    try:
+        import importlib
+        shap = importlib.import_module("shap")
+        SHAP_AVAILABLE = True
+        return shap
+    except Exception:  # pragma: no cover - optional/runtime environment
+        shap = None
+        SHAP_AVAILABLE = False
+        return None
 
 
 @dataclass
@@ -26,6 +38,12 @@ class ExplanationOutput:
     local_importance: pd.DataFrame
     base_value: Optional[float] = None
     warning: str = ""
+    # Prediction metadata for the exact row explained.  This lets the Copilot
+    # answer local questions such as "What is this customer's churn risk?"
+    # from the same evidence object used for local SHAP.
+    predicted_label: Optional[object] = None
+    predicted_probability: Optional[float] = None
+    explained_row_index: Optional[object] = None
 
 
 def _extract_shap_values(values):
@@ -59,15 +77,31 @@ def explain_model(result: ModelResult, row: Optional[pd.DataFrame] = None, max_b
     X_sample = result.X_test.sample(min(max_background, len(result.X_test)), random_state=42) if len(result.X_test) else result.X_test
     row_df = row[result.feature_columns] if row is not None else result.X_test.head(1)
 
-    if SHAP_AVAILABLE and shap is not None and len(X_sample) > 1:
+    predicted_label = None
+    predicted_probability: Optional[float] = None
+    explained_row_index = row_df.index[0] if row_df is not None and len(row_df) else None
+    try:
+        if row_df is not None and len(row_df):
+            predicted_label = result.pipeline.predict(row_df)[0]
+            if hasattr(result.pipeline, "predict_proba"):
+                probs = np.asarray(result.pipeline.predict_proba(row_df))[0]
+                classes = list(getattr(result.pipeline, "classes_", []))
+                idx = next((i for i, c in enumerate(classes) if str(c) == str(result.positive_label)), 1 if len(probs) > 1 else 0)
+                predicted_probability = float(probs[idx])
+    except Exception:
+        predicted_label = None
+        predicted_probability = None
+
+    shap_mod = _load_shap()
+    if shap_mod is not None and len(X_sample) > 1:
         try:
             model = result.pipeline.named_steps["model"]
-            X_trans = transformed_matrix(result.pipeline, X_sample)
-            row_trans = transformed_matrix(result.pipeline, row_df)
+            X_trans = np.asarray(transformed_matrix(result.pipeline, X_sample))
+            row_trans = np.asarray(transformed_matrix(result.pipeline, row_df))
             feature_names = get_feature_names(result.pipeline)
 
             if hasattr(model, "feature_importances_"):
-                explainer = shap.TreeExplainer(model)
+                explainer = shap_mod.TreeExplainer(model)
                 shap_values = _extract_shap_values(explainer.shap_values(X_trans))
                 row_values = _extract_shap_values(explainer.shap_values(row_trans))
                 base = explainer.expected_value
@@ -75,11 +109,27 @@ def explain_model(result: ModelResult, row: Optional[pd.DataFrame] = None, max_b
                     base_value = float(np.asarray(base).ravel()[-1])
                 else:
                     base_value = float(base)
+            elif hasattr(model, "coef_"):
+                # Logistic Regression / linear models: exact Linear SHAP is
+                # substantially faster than the generic model-agnostic explainer.
+                background = X_trans[: min(100, X_trans.shape[0])]
+                explainer = shap_mod.LinearExplainer(model, background)
+                eval_matrix = X_trans[: min(160, X_trans.shape[0])]
+                shap_values = _extract_shap_values(explainer.shap_values(eval_matrix))
+                row_values = _extract_shap_values(explainer.shap_values(row_trans))
+                base = getattr(explainer, "expected_value", None)
+                if isinstance(base, (list, np.ndarray)):
+                    base_value = float(np.asarray(base).ravel()[-1])
+                elif base is not None:
+                    base_value = float(base)
+                else:
+                    base_value = None
             else:
-                # Model-agnostic SHAP is slower; use a compact transformed background.
-                background = shap.sample(X_trans, min(80, X_trans.shape[0]), random_state=42)
-                explainer = shap.Explainer(model.predict_proba, background, feature_names=feature_names)
-                shap_values_obj = explainer(X_trans[: min(120, X_trans.shape[0])])
+                # MLP/other model-agnostic path: keep the background/evaluation
+                # deliberately compact so the interactive app remains responsive.
+                background = shap_mod.sample(X_trans, min(30, X_trans.shape[0]), random_state=42)
+                explainer = shap_mod.Explainer(model.predict_proba, background, feature_names=feature_names)
+                shap_values_obj = explainer(X_trans[: min(50, X_trans.shape[0])])
                 values = shap_values_obj.values
                 if values.ndim == 3:
                     shap_values = values[:, :, 1]
@@ -107,7 +157,12 @@ def explain_model(result: ModelResult, row: Optional[pd.DataFrame] = None, max_b
                 "contribution": row_values[0, :n],
                 "absolute_contribution": np.abs(row_values[0, :n]),
             }).sort_values("absolute_contribution", ascending=False)
-            return ExplanationOutput("SHAP", global_df, local_df, base_value=base_value)
+            return ExplanationOutput(
+                "SHAP", global_df, local_df, base_value=base_value,
+                predicted_label=predicted_label,
+                predicted_probability=predicted_probability,
+                explained_row_index=explained_row_index,
+            )
         except Exception as exc:
             fallback = _feature_importance_from_model(result)
             return ExplanationOutput(
@@ -115,6 +170,9 @@ def explain_model(result: ModelResult, row: Optional[pd.DataFrame] = None, max_b
                 global_importance=fallback,
                 local_importance=fallback.rename(columns={"importance": "absolute_contribution"}).assign(contribution=np.nan),
                 warning=f"SHAP could not be computed in this run, so fallback model importance is shown. Detail: {exc}",
+                predicted_label=predicted_label,
+                predicted_probability=predicted_probability,
+                explained_row_index=explained_row_index,
             )
 
     fallback = _feature_importance_from_model(result)
@@ -123,6 +181,9 @@ def explain_model(result: ModelResult, row: Optional[pd.DataFrame] = None, max_b
         global_importance=fallback,
         local_importance=fallback.rename(columns={"importance": "absolute_contribution"}).assign(contribution=np.nan),
         warning="SHAP package is not available or there is insufficient test data, so fallback model importance is shown.",
+        predicted_label=predicted_label,
+        predicted_probability=predicted_probability,
+        explained_row_index=explained_row_index,
     )
 
 

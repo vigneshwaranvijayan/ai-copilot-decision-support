@@ -1,7 +1,7 @@
 """Dataset readiness, quality-gate and trust evidence utilities.
 
-The validation layer implements explicit PASS/WARNING/FAIL thresholds so the
-research contribution is measurable and explainable in the dissertation.
+The core PASS/WARNING/FAIL gates intentionally mirror Table 3.1 of the
+methodology so exported evidence and dissertation wording stay consistent.
 """
 from __future__ import annotations
 
@@ -11,15 +11,16 @@ import hashlib
 import json
 import time
 
+import numpy as np
 import pandas as pd
 
 from .readiness_gates import (
     FAIL,
     PASS,
     WARNING,
+    CORE_READINESS_GATES,
     READINESS_THRESHOLDS,
     class_balance_status,
-    readiness_criteria_table,
     row_count_status,
     status_from_percent,
 )
@@ -28,7 +29,7 @@ from .readiness_gates import (
 @dataclass
 class GateResult:
     gate: str
-    status: str  # PASS / WARNING / FAIL
+    status: str
     message: str
     evidence: str = ""
 
@@ -57,7 +58,6 @@ class ReadinessReport:
 
 
 def dataset_fingerprint(df: pd.DataFrame, name: str = "dataset") -> str:
-    """Create a stable light-weight fingerprint for caching/audit evidence."""
     cols = [str(c) for c in df.columns]
     payload = {
         "name": name,
@@ -66,26 +66,65 @@ def dataset_fingerprint(df: pd.DataFrame, name: str = "dataset") -> str:
         "dtypes": [str(df[c].dtype) for c in df.columns],
     }
     try:
-        sample = df.head(25).astype("string").fillna("<NA>").to_csv(index=False)
-        payload["sample"] = sample
+        payload["sample"] = df.head(25).astype("string").fillna("<NA>").to_csv(index=False)
     except Exception:
         payload["sample"] = "unavailable"
     raw = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
-def _status_rank(status: str) -> int:
-    return {PASS: 0, WARNING: 1, FAIL: 2}.get(status, 1)
-
-
 def _infer_sensitive_columns(df: pd.DataFrame) -> List[str]:
     tokens = ["name", "email", "phone", "mobile", "address", "postcode", "zip", "dob", "birth", "ssn", "national", "passport"]
+    service_feature_exceptions = {
+        "phoneservice", "multiplelines", "internetservice", "onlinesecurity", "onlinebackup",
+        "deviceprotection", "techsupport", "streamingtv", "streamingmovies",
+    }
     matches = []
     for c in df.columns:
-        lower = str(c).lower().replace("_", "")
+        lower = str(c).lower().replace("_", "").replace(" ", "")
+        if lower in service_feature_exceptions:
+            continue
         if any(t in lower for t in tokens):
             matches.append(str(c))
     return matches
+
+
+def _data_type_gate(df: pd.DataFrame, target_column: Optional[str]) -> GateResult:
+    """Assess whether fields can enter the standard encoding/scaling pipeline."""
+    if df is None or df.empty:
+        return GateResult("Data types", FAIL, "No usable columns are available for type checking.", "empty dataset")
+
+    problematic: List[str] = []
+    conversion_candidates: List[str] = []
+    for col in df.columns:
+        if col == target_column:
+            continue
+        s = df[col]
+        if pd.api.types.is_complex_dtype(s):
+            problematic.append(str(col))
+            continue
+        if pd.api.types.is_object_dtype(s):
+            sample = s.dropna().head(100)
+            if any(isinstance(v, (dict, list, set, tuple)) for v in sample):
+                problematic.append(str(col))
+                continue
+            # Numeric-looking text is processable but should be cleaned/converted.
+            if len(sample):
+                numeric_rate = pd.to_numeric(sample, errors="coerce").notna().mean()
+                if 0.8 <= numeric_rate < 1.0:
+                    conversion_candidates.append(str(col))
+
+    predictor_count = len([c for c in df.columns if c != target_column])
+    if predictor_count < 1 or len(problematic) >= predictor_count:
+        return GateResult("Data types", FAIL, "Major data-type issues prevent modelling.", ", ".join(problematic[:8]) or "no predictor columns")
+    if problematic or conversion_candidates:
+        details = []
+        if problematic:
+            details.append("non-scalar: " + ", ".join(problematic[:6]))
+        if conversion_candidates:
+            details.append("conversion suggested: " + ", ".join(conversion_candidates[:6]))
+        return GateResult("Data types", WARNING, "Some columns require cleaning or conversion before reliable modelling.", "; ".join(details))
+    return GateResult("Data types", PASS, "Columns can be processed after standard encoding/scaling.", f"{predictor_count} predictor column(s) checked")
 
 
 def build_readiness_report(df: pd.DataFrame, dataset_name: str = "active_dataset", target_column: Optional[str] = None) -> ReadinessReport:
@@ -99,77 +138,91 @@ def build_readiness_report(df: pd.DataFrame, dataset_name: str = "active_dataset
 
     gates: List[GateResult] = []
 
-    if rows == 0 or cols == 0:
-        gates.append(GateResult("Data availability", FAIL, "Dataset is empty or unavailable.", f"rows={rows}, columns={cols}"))
-    elif cols < int(READINESS_THRESHOLDS["column_count"]["pass_min"]):
-        gates.append(GateResult("Data availability", FAIL, "Dataset has too few columns for analysis.", f"rows={rows:,}, columns={cols:,}"))
+    # 1. File loading / data availability
+    if rows == 0 or cols < int(READINESS_THRESHOLDS["column_count"]["pass_min"]):
+        gates.append(GateResult("File loading / data availability", FAIL, "Dataset is empty or has too few usable columns.", f"rows={rows}, columns={cols}"))
     else:
-        gates.append(GateResult("Data availability", PASS, "Dataset contains records and usable columns.", f"rows={rows:,}, columns={cols:,}"))
+        gates.append(GateResult("File loading / data availability", PASS, "File/data loaded correctly for the in-memory workflow.", f"rows={rows:,}, columns={cols:,}"))
 
-    unnamed_cols = [c for c in df.columns if str(c).strip() == "" or str(c).lower().startswith("unnamed")]
-    duplicate_col_names = len(set(map(str, df.columns))) != len(df.columns)
-    if duplicate_col_names:
-        gates.append(GateResult("Schema readability", FAIL, "Duplicate column names make evidence tracing unsafe.", "duplicate column names detected"))
-    elif unnamed_cols:
-        gates.append(GateResult("Schema readability", WARNING, "Some columns have weak or generated names.", ", ".join(map(str, unnamed_cols[:8]))))
-    else:
-        gates.append(GateResult("Schema readability", PASS, "Column names are readable.", f"{cols:,} columns"))
-
-    miss_status = status_from_percent(
-        missing_pct,
-        READINESS_THRESHOLDS["missing_cells_percent"]["pass_max"],
-        READINESS_THRESHOLDS["missing_cells_percent"]["warning_max"],
-    )
-    if miss_status == PASS:
-        miss_msg = "Missing values are within the PASS threshold of 0-5%."
-    elif miss_status == WARNING:
-        miss_msg = "Missing values are within the WARNING range of >5-20%; review before decisions."
-    else:
-        miss_msg = "Missing values exceed 20%, so reliable automatic analysis is not safe."
-    gates.append(GateResult("Missing-value quality", miss_status, miss_msg, f"{missing_pct:.2f}% missing cells"))
-
-    dup_status = status_from_percent(
-        duplicate_pct,
-        READINESS_THRESHOLDS["duplicate_rows_percent"]["pass_max"],
-        READINESS_THRESHOLDS["duplicate_rows_percent"]["warning_max"],
-    )
-    if dup_status == PASS:
-        dup_msg = "Duplicate rows are within the PASS threshold of 0-5%."
-    elif dup_status == WARNING:
-        dup_msg = "Duplicate rows are within the WARNING range of >5-15%; review possible repeated records."
-    else:
-        dup_msg = "Duplicate rows exceed 15%, so summaries/models may be distorted."
-    gates.append(GateResult("Duplicate-row quality", dup_status, dup_msg, f"{duplicate_pct:.2f}% duplicate rows"))
-
+    # 2. Dataset size
     row_status = row_count_status(rows)
-    row_msg = {
-        PASS: "Dataset has enough rows for prototype automatic modelling.",
-        WARNING: "Dataset is small for modelling; use results with caution.",
-        FAIL: "Dataset has fewer than 100 rows, so automatic modelling is not reliable.",
-    }[row_status]
-    gates.append(GateResult("Modelling row-count readiness", row_status, row_msg, f"{rows:,} rows"))
+    gates.append(GateResult(
+        "Dataset size",
+        row_status,
+        {PASS: "Dataset has 500 or more rows.", WARNING: "Dataset has 100-499 rows; modelling can continue with caution.", FAIL: "Dataset has fewer than 100 rows."}[row_status],
+        f"{rows:,} rows",
+    ))
 
-    if target_column:
-        if target_column not in df.columns:
-            gates.append(GateResult("Model target readiness", FAIL, "Selected target column is not present in the dataset.", str(target_column)))
-        elif df[target_column].dropna().nunique() < 2:
-            gates.append(GateResult("Model target readiness", FAIL, "Target column has fewer than two classes/values.", str(target_column)))
-        else:
-            gates.append(GateResult("Model target readiness", PASS, "Target column is present and usable for model training.", str(target_column)))
-            if df[target_column].dropna().nunique() <= 20:
-                bal_status, minority, bal_msg = class_balance_status(df[target_column])
-                gates.append(GateResult("Class-balance readiness", bal_status, bal_msg, f"minority_class={minority:.2f}%"))
+    # 3. Missing values
+    miss_status = status_from_percent(missing_pct, READINESS_THRESHOLDS["missing_cells_percent"]["pass_max"], READINESS_THRESHOLDS["missing_cells_percent"]["warning_max"])
+    gates.append(GateResult(
+        "Missing values",
+        miss_status,
+        {PASS: "Missing values are within 0-5%.", WARNING: "Missing values are above 5% and up to 20%; limitations must be visible.", FAIL: "Missing values exceed 20%."}[miss_status],
+        f"{missing_pct:.2f}% missing cells",
+    ))
+
+    # 4. Duplicate rows
+    dup_status = status_from_percent(duplicate_pct, READINESS_THRESHOLDS["duplicate_rows_percent"]["pass_max"], READINESS_THRESHOLDS["duplicate_rows_percent"]["warning_max"])
+    gates.append(GateResult(
+        "Duplicate rows",
+        dup_status,
+        {PASS: "Duplicate rows are within 0-5%.", WARNING: "Duplicate rows are above 5% and up to 15%; review repeated records.", FAIL: "Duplicate rows exceed 15%."}[dup_status],
+        f"{duplicate_pct:.2f}% duplicate rows",
+    ))
+
+    # 5-7. Target column, target validity and class balance
+    target_exists = bool(target_column and target_column in df.columns)
+    target_valid = False
+    if not target_column:
+        gates.append(GateResult("Target column", WARNING, "No target is selected yet; EDA can continue but prediction requires confirmation.", "target not selected"))
+        gates.append(GateResult("Target validity", WARNING, "Target validity cannot be checked until a target is selected.", "target not selected"))
+        gates.append(GateResult("Class balance", WARNING, "Class balance cannot be checked until a classification target is selected.", "target not selected"))
+    elif not target_exists:
+        gates.append(GateResult("Target column", FAIL, "Selected target column is not present in the dataset.", str(target_column)))
+        gates.append(GateResult("Target validity", FAIL, "Target cannot be validated because the selected column is missing.", str(target_column)))
+        gates.append(GateResult("Class balance", FAIL, "Class balance cannot be computed because the selected target is missing.", str(target_column)))
     else:
-        # Dataset-level analysis can still be PASS. Model-specific questions will fail/warn at answer level.
-        gates.append(GateResult("Model target readiness", WARNING, "No target selected yet; EDA and Copilot summary can still work, but prediction requires a target.", "classification/regression requires target selection"))
+        gates.append(GateResult("Target column", PASS, "Selected target column is available.", str(target_column)))
+        target_values = df[target_column].dropna()
+        nunique = int(target_values.nunique())
+        if nunique < 2:
+            gates.append(GateResult("Target validity", FAIL, "Target has only one usable class/value.", f"unique_values={nunique}"))
+            gates.append(GateResult("Class balance", FAIL, "Class balance is not meaningful for a one-class target.", f"unique_values={nunique}"))
+        else:
+            target_valid = True
+            gates.append(GateResult("Target validity", PASS, "Target has at least two usable classes/values.", f"unique_values={nunique}"))
+            if nunique <= 20:
+                bal_status, minority, bal_msg = class_balance_status(target_values)
+                gates.append(GateResult("Class balance", bal_status, bal_msg, f"minority_class={minority:.2f}%"))
+            else:
+                gates.append(GateResult("Class balance", WARNING, "Selected target has many unique values; class-balance classification criteria are not directly applicable.", f"unique_values={nunique}"))
 
+    # 8. Data types
+    dtype_gate = _data_type_gate(df, target_column)
+    gates.append(dtype_gate)
+
+    # 9. Evidence availability
+    if rows == 0 or cols < 2:
+        evidence_gate = GateResult("Evidence availability", FAIL, "Required evidence is missing.", "no usable dataset evidence")
+    elif target_column and (not target_exists or not target_valid):
+        evidence_gate = GateResult("Evidence availability", FAIL, "Required modelling/explanation evidence is missing because the target is unusable.", "target evidence unavailable")
+    elif target_column and row_status == FAIL:
+        evidence_gate = GateResult("Evidence availability", FAIL, "There are too few rows for reliable modelling/explanation evidence.", f"rows={rows}")
+    elif target_column:
+        evidence_gate = GateResult("Evidence availability", PASS, "Enough dataset evidence exists for charts, modelling, explanation and grounded Copilot answers.", "dataset + selected target available")
+    else:
+        evidence_gate = GateResult("Evidence availability", WARNING, "Dataset/visual evidence is available, but prediction/explanation evidence requires target selection.", "partial evidence: EDA only")
+    gates.append(evidence_gate)
+
+    # Supplementary privacy/security screen (does not redefine Table 3.1 status).
     sensitive = _infer_sensitive_columns(df)
     if sensitive:
-        gates.append(GateResult("Security/privacy readiness", WARNING, "Possible personal/sensitive fields detected; outputs must be handled carefully.", ", ".join(sensitive[:8])))
+        gates.append(GateResult("Supplementary privacy/security screen", WARNING, "Possible personal identifier fields detected; handle outputs carefully.", ", ".join(sensitive[:8])))
     else:
-        gates.append(GateResult("Security/privacy readiness", PASS, "No obvious personal identifier columns detected by the simple prototype check.", "keyword-based scan"))
+        gates.append(GateResult("Supplementary privacy/security screen", PASS, "No obvious personal identifier columns detected by the simple keyword screen.", "supplementary check"))
 
-    # Transparent quality score: missingness and duplicates dominate; empty/invalid data heavily penalised.
+    # Transparent quality score. Core fail/warning states still determine the final label.
     penalty = min(missing_pct * 2.0, 55) + min(duplicate_pct * 1.2, 30)
     if rows == 0 or cols < 2:
         penalty += 60
@@ -177,12 +230,16 @@ def build_readiness_report(df: pd.DataFrame, dataset_name: str = "active_dataset
         penalty += 5
     elif row_status == FAIL:
         penalty += 15
+    if dtype_gate.status == WARNING:
+        penalty += 3
+    elif dtype_gate.status == FAIL:
+        penalty += 15
     quality_score = max(0.0, round(100 - penalty, 2))
 
-    hard_fail_gates = {"Data availability", "Schema readability", "Missing-value quality", "Duplicate-row quality"}
-    if any(g.status == FAIL and g.gate in hard_fail_gates for g in gates):
+    core = [g for g in gates if g.gate in CORE_READINESS_GATES]
+    if any(g.status == FAIL for g in core):
         overall = FAIL
-    elif any(g.status == WARNING and g.gate != "Model target readiness" for g in gates):
+    elif any(g.status == WARNING for g in core):
         overall = WARNING
     else:
         overall = PASS

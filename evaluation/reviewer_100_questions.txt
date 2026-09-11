@@ -1,0 +1,100 @@
+1. What dataset is currently loaded?
+2. How many rows and columns are in this dataset?
+3. What is the target column?
+4. Is this dataset suitable for churn modelling?
+5. What is the overall data-readiness result?
+6. What does the readiness result mean?
+7. Show the data-readiness evidence.
+8. Are there any missing values in this dataset?
+9. Which columns contain missing values?
+10. Are there any duplicate rows?
+11. Is the target column valid for classification?
+12. How many classes are in the target column?
+13. Is the churn target imbalanced?
+14. What percentage of customers churned?
+15. What percentage of customers did not churn?
+16. Are there any data-quality issues I should know about?
+17. Are the data types suitable for modelling?
+18. What limitations were identified during data validation?
+19. What are the main patterns in this dataset?
+20. Which customer group has the highest churn rate?
+21. How does contract type relate to churn?
+22. Do month-to-month customers have higher churn?
+23. How does tenure relate to churn?
+24. Do customers with shorter tenure appear more likely to churn?
+25. Do monthly charges appear related to churn?
+26. How do monthly charges differ between churn and non-churn customers?
+27. Which categorical features appear related to churn?
+28. Which numeric features appear related to churn?
+29. What does the churn distribution chart show?
+30. What important pattern can I see from the visualisations?
+31. Which machine-learning models were trained?
+32. Compare Logistic Regression, Random Forest, Gradient Boosting and MLP.
+33. Which model was selected as the preferred model?
+34. Why was that model selected?
+35. What rule was used to select the preferred model?
+36. Which model has the highest accuracy?
+37. Which model has the highest precision?
+38. Which model has the highest recall?
+39. Which model has the highest F1-score?
+40. Which model has the highest ROC-AUC?
+41. What is the accuracy of Logistic Regression?
+42. What is the precision of Logistic Regression?
+43. What is the recall of Logistic Regression?
+44. What is the F1-score of Logistic Regression?
+45. What is the ROC-AUC of Logistic Regression?
+46. What is the performance of Random Forest?
+47. What is the performance of Gradient Boosting?
+48. What is the performance of the MLP model?
+49. Why should accuracy not be used alone?
+50. Why is recall important for churn prediction?
+51. Why is precision important for churn prediction?
+52. What does the F1-score mean in this analysis?
+53. What does ROC-AUC tell us?
+54. Explain the confusion matrix.
+55. How many true positives are there?
+56. How many true negatives are there?
+57. How many false positives are there?
+58. How many false negatives are there?
+59. Does the preferred model outperform every other model on every metric?
+60. What are the most important churn drivers?
+61. Show the top SHAP features.
+62. Which features contribute most to the model's predictions?
+63. What does the SHAP analysis tell us?
+64. Explain the SHAP results in simple business language.
+65. Does contract type influence churn prediction?
+66. Does tenure influence churn prediction?
+67. Do monthly charges influence churn prediction?
+68. Which features increase churn risk?
+69. Which features decrease churn risk?
+70. What is the difference between global and local SHAP explanations?
+71. What does the global SHAP explanation show?
+72. Why is SHAP useful in this project?
+73. Can feature importance prove that a feature causes churn?
+74. What limitations should I consider when interpreting SHAP?
+75. What is this customer's predicted churn risk?
+76. Is this customer predicted to churn?
+77. Why is this customer predicted to churn?
+78. What are the main factors increasing this customer's churn risk?
+79. What factors reduce this customer's churn risk?
+80. Explain this customer's prediction in simple business language.
+81. Which feature contributed most to this customer's prediction?
+82. What business action could be considered for this customer?
+83. What action should the business consider for high-risk customers?
+84. What retention action would you recommend?
+85. What should the business consider if short tenure is a major churn driver?
+86. What should the business consider if monthly charges are associated with churn?
+87. What action could be considered for month-to-month customers?
+88. What evidence supports your recommendation?
+89. What limitations apply to this recommendation?
+90. Should a human review this recommendation before taking action?
+91. Can you guarantee this customer will churn?
+92. Can this model replace a manager's decision?
+93. Should the business automatically cancel high-risk customers?
+94. Can I make a final business decision using only this model?
+95. Can SHAP prove that a feature causes churn?
+96. Can you use external customer complaints that are not in this dataset?
+97. What evidence did you use for this answer?
+98. Why is this answer grounded in the dataset?
+99. is this datset good for modling?
+100. What can be exported from this analysis?

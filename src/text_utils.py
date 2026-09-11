@@ -5,8 +5,17 @@ import re
 from difflib import get_close_matches
 from typing import Iterable, List, Tuple
 
+PROTECTED_WORDS = {"balanced", "imbalanced", "balance", "class", "classes"}
+
 COMMON_CORRECTIONS = {
     "chrun": "churn",
+    "datset": "dataset",
+    "datsset": "dataset",
+    "perfomed": "performed",
+    "performd": "performed",
+    "wich": "which",
+    "saftey": "safety",
+    "modling": "modelling",
     "chrurn": "churn",
     "custmer": "customer",
     "costomer": "customer",
@@ -69,7 +78,6 @@ COMMON_CORRECTIONS = {
     "vizualtion": "visualisation",
     "visualtion": "visualisation",
     "visualiztion": "visualisation",
-    "modling": "modelling",
     "modelingg": "modelling",
     "mdoeling": "modelling",
     "campare": "compare",
@@ -114,7 +122,9 @@ def normalise_question(text: str, known_terms: Iterable[str] | None = None) -> T
 
     for word in words:
         fixed = COMMON_CORRECTIONS.get(word, word)
-        if fixed == word and known_tokens and len(word) > 2:
+        if word in PROTECTED_WORDS:
+            fixed = word
+        elif fixed == word and known_tokens and len(word) > 2:
             match = get_close_matches(word, list(known_tokens), n=1, cutoff=0.86)
             if match:
                 fixed = match[0]

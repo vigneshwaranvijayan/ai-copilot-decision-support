@@ -1,0 +1,6 @@
+# Optional/future architecture only; not required for the assessed core workflow.
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+chromadb>=0.5; python_version >= "3.9"
+pypdf>=4.0
+python-docx>=1.1
